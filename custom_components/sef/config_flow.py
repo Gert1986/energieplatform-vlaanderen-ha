@@ -75,9 +75,15 @@ class SefConfigFlow(ConfigFlow, domain=DOMAIN):
         }))
 
     async def async_step_import(self, import_data: dict) -> ConfigFlowResult:
-        """De YAML (`sef:` in configuration.yaml): nieuw, of de bestaande ingave bijwerken."""
+        """De YAML (`sef:` in configuration.yaml): nieuw, of de bestaande ingave
+        vervangen. Vervangen, niet aanvullen: een sleutel die uit de YAML
+        verdwijnt (bv. `gas`), verdwijnt ook uit de ingave."""
         await self.async_set_unique_id(DOMAIN)
-        self._abort_if_unique_id_configured(updates=dict(import_data))
+        for entry in self._async_current_entries():
+            if dict(entry.data) != dict(import_data):
+                self.hass.config_entries.async_update_entry(entry, data=dict(import_data))
+                self.hass.async_create_task(self.hass.config_entries.async_reload(entry.entry_id))
+            return self.async_abort(reason="already_configured")
         return self.async_create_entry(title="SEF", data=dict(import_data))
 
     async def _controleer(self, url: str, sleutel: str) -> str | None:

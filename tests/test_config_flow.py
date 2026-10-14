@@ -88,14 +88,15 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
 
 
 async def test_yaml_import_maakt_en_werkt_bij(recorder_mock, enable_custom_integrations, hass, nep_sef):
-    yaml = {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False}
+    yaml = {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False, "meter": "abcd1234"}
     r = await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT},
                                                   data=yaml)
     assert r["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     r = await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT},
-                                                  data={**yaml, "tarief_1": "nacht"})
+                                                  data={k: v for k, v in yaml.items() if k != "meter"} | {"tarief_1": "nacht"})
     assert r["type"] is FlowResultType.ABORT
+    await hass.async_block_till_done()
     (entry,) = hass.config_entries.async_entries(sef.DOMAIN)
-    assert entry.data["tarief_1"] == "nacht"
+    assert entry.data["tarief_1"] == "nacht" and "meter" not in entry.data  # de YAML vervangt, vult niet aan
     assert await hass.config_entries.async_unload(entry.entry_id)

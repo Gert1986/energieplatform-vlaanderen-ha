@@ -60,7 +60,9 @@ Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.ph
    *custom repository* (type *Integration*). Herstart Home Assistant.
 2. *Instellingen → Apparaten en diensten → Integratie toevoegen → SEF*. Eerst het adres (laat staan) en je
    Home Assistant-sleutel; SEF controleert hem meteen. Daarna optioneel de P1-meter (punten 3 en 4): laat
-   alles leeg voor enkel de prijs- en waakhondsensoren.
+   alles leeg voor enkel de prijs- en waakhondsensoren. Later de meter of telwerken toevoegen of wijzigen:
+   de integratie verwijderen en opnieuw toevoegen (een optiescherm is er nog niet; het meter-ID wijzig je best
+   nooit, SEF weigert een ander ID).
 3. Zoek de entiteiten van de HomeWizard P1: *Instellingen → Ontwikkelhulpmiddelen → Statussen*, zoek op
    `energy_import_tariff` en `energy_export_tariff`. Het zijn kWh-tellers (`state_class: total_increasing`).
 4. Het meter-ID: het serienummer van de HomeWizard P1-meter (*Instellingen → Apparaten → HomeWizard →
@@ -87,7 +89,9 @@ in de YAML werkt die bij). In `secrets.yaml`: `sef_sleutel: sef_...`, en in `con
        custom_components.sef: debug
    ```
    Zonder `meter` of telwerken: enkel de prijs- en waakhondsensoren. Wie van 0.3.0 komt, houdt dezelfde
-   entiteiten (zelfde `unique_id`), dus ook het Energy-dashboard blijft werken.
+   entiteiten (zelfde `unique_id`), dus ook het Energy-dashboard blijft werken (nagekeken met HA 2025.1.4:
+   0.3.0 met YAML gestart, daarna 0.4.0, zelfde `entity_id`'s). De YAML vervangt bij elke start de ingave: een
+   regel die je schrapt, verdwijnt ook daar.
 
 ## Een melding als het goedkoper kan
 
