@@ -1,0 +1,101 @@
+# SEF in Home Assistant (experiment)
+
+Custom component `sef` (ADR-0054 en ADR-0064 in de SEF-repo). Doet drie dingen:
+
+1. **Prijssensoren** `sensor.sef_afnameprijs` en `sensor.sef_injectieprijs`: wat één kWh nu kost (of
+   opbrengt) met je huidige contract, all-in in EUR incl. btw, elk kwartier opgevraagd bij
+   `GET /api/v1/mij/prijs`. Bij een dynamisch contract staat de prijs per kwartier (vandaag, na 13 uur ook
+   morgen) in het attribuut `kwartieren`.
+2. **P1-upload**: twee minuten na elk kwartier leest hij de 5-minutenstatistieken van je vier
+   P1-telwerken, maakt er kwartieren van en stuurt alles sinds de laatste meting in SEF naar
+   `POST /api/v1/mij/aansluitingen/{id}/meetwaarden`. Een gemist kwartier (herstart) vult hij vanzelf aan,
+   tot 10 dagen terug.
+3. **Gas** (optioneel, sleutel `gas`): elk uur (7 minuten na het uur) het gasverbruik in m³ van elk volledig
+   uur sinds de laatste gasmeting in SEF; SEF rekent om naar kWh met de omrekening uit je eigen
+   Fluvius-gasexport. Plus de sensor `sensor.sef_gasprijs`: wat één m³ gas nu kost met je huidige
+   gascontract (EUR/m³ incl. btw, de eenheid van je P1-gasmeter), elk uur opgevraagd bij
+   `GET /api/v1/mij/gasprijs`.
+
+Status: experiment. Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.php. Later een eigen repo, met configuratiescherm en HACS.
+
+## Vooraf
+
+- **Internet**: Home Assistant praat met `https://energieplatform-vlaanderen.be/api/v1` (sinds 0.2.0; geen Tailscale meer nodig).
+  Controle (Terminal-add-on): `curl -s -o /dev/null -w '%{http_code}' https://energieplatform-vlaanderen.be/api/v1/status` geeft `401`
+  (geen sleutel), niet een time-out.
+- **Fluvius-export**: de P1-upload sluit aan op de laatste meting in SEF en kan hoogstens 10 dagen
+  aanvullen. Staat je meting in SEF ouder, laad dan eerst een nieuwe Fluvius-export op de website.
+- **Huidig contract** aangeduid op de website (voor de prijssensoren; voor de gasprijs ook je gascontract).
+- **Gas**: een gasaansluiting met uurwaarden uit een Fluvius-export. Laad je recentste gasexport (opnieuw) op:
+  daaruit haalt SEF de omrekening van m³ naar kWh (zonder die omrekening weigert SEF de gasupload met
+  `GEEN_OMREKENFACTOR` en blijft de gasprijssensor onbekend). De P1-stroom staat per aansluiting aan of uit,
+  dus zet hem ook voor je gasaansluiting aan.
+- **P1-stroom aan** op de website: *Mijn Energieplatform → Instellingen → P1-meter → P1-stroom toestaan*.
+  Zonder die toestemming weigert SEF elke upload (`P1_GEEN_TOESTEMMING`, melding in Home Assistant). Daar
+  stop je de stroom ook en wis je de P1-gegevens.
+- **Sleutel**: maak een **Home Assistant-sleutel** op *Mijn Energieplatform → API-sleutels* (de sleutel
+  verschijnt één keer). Of, door de beheerder in een eigen terminal:
+  ```bash
+  python scripts/api_sleutel.py --maak --email <adres> --label "Home Assistant" --scopes dossier:lezen dossier:schrijven
+  ```
+  Zonder `dossier:schrijven` werken enkel de prijssensoren.
+
+## Installeren
+
+1. Kopieer de map `custom_components/sef/` naar `/config/custom_components/sef/` in Home Assistant
+   (bv. met de add-on *Samba share* of *Studio Code Server*).
+2. Zoek de entiteiten van de HomeWizard P1: *Instellingen → Ontwikkelhulpmiddelen → Statussen*, zoek op
+   `energy_import_tariff` en `energy_export_tariff`. Het zijn kWh-tellers (`state_class: total_increasing`).
+3. Het meter-ID: het serienummer van de HomeWizard P1-meter (*Instellingen → Apparaten → HomeWizard →
+   apparaatinfo*), enkel letters en cijfers. SEF koppelt de eerste upload aan dit ID; een ander ID daarna
+   wordt geweigerd. Kies het dus één keer en laat het staan.
+4. In `secrets.yaml`: `sef_sleutel: sef_...`
+5. In `configuration.yaml`:
+   ```yaml
+   sef:
+     sleutel: !secret sef_sleutel
+     meter: 5c2fafabcdef            # serienummer van de P1-meter
+     afname_1: sensor.p1_meter_energy_import_tariff_1
+     afname_2: sensor.p1_meter_energy_import_tariff_2
+     injectie_1: sensor.p1_meter_energy_export_tariff_1
+     injectie_2: sensor.p1_meter_energy_export_tariff_2
+     tarief_1: dag                  # Belgische afspraak: 1.8.1/2.8.1 = dag. Omgekeerd? Zet nacht.
+     # enkelvoudig: true            # enkel bij een enkelvoudige meter
+     gas: sensor.p1_meter_total_gas # optioneel: gastelwerk in m³ (upload + gasprijssensor)
+   logger:
+     logs:
+       custom_components.sef: debug
+   ```
+   Zonder `meter` of telwerken: enkel de prijssensoren.
+6. Herstart Home Assistant. Na een minuut loopt de eerste upload; meldingen van SEF verschijnen als
+   melding in Home Assistant (*SEF weigerde de P1-upload …*) en in het logboek.
+
+## Energy-dashboard
+
+*Instellingen → Dashboards → Energie → Elektriciteitsnet*: bij elk afnametelwerk "Gebruik een entiteit
+met de huidige prijs" → `sensor.sef_afnameprijs`; bij elk injectietelwerk → `sensor.sef_injectieprijs`.
+De vaste kosten (vaste vergoeding, capaciteitstarief) zitten bewust niet in die prijs.
+
+*Gas*: bij het gastelwerk (`sensor.p1_meter_total_gas`) "Gebruik een entiteit met de huidige prijs" →
+`sensor.sef_gasprijs`. Ook hier zonder vaste vergoeding en vaste netkost. De attributen tonen de prijs per
+kWh en de gebruikte omrekening (kWh per m³ en de maand waarvan ze komt).
+
+## Wat je moet weten
+
+- **Herstart of storing**: Home Assistant zet het verbruik van een periode zonder statistiek in het eerste
+  blok erna. Het totaal klopt, het tijdstip niet (dat kan een maandpiek te hoog laten lijken). Een latere
+  Fluvius-export vervangt die kwartieren: Fluvius gaat altijd voor.
+- **Eén register per kwartier**: het telwerk dat bewoog (tarief 1 of 2). Bij een wissel binnen het
+  kwartier gaat alles naar het grootste.
+- **Gas in m³, SEF rekent om**: met de omrekening van de laatste volledige maand in je Fluvius-export
+  (de werkelijke maand wijkt doorgaans minder dan 1 % af). Een latere Fluvius-export vervangt de P1-uren
+  door de juiste waarden.
+- **Limiet**: SEF aanvaardt 12 uploads per uur per sleutel; normaal is het er 4 (met gas 5).
+
+## Tests
+
+De rekenlogica (`p1.py`) heeft geen Home Assistant nodig:
+
+```bash
+python -m pytest -q tests
+```

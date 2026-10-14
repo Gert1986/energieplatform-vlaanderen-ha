@@ -1,0 +1,10 @@
+{
+  "domain": "sef",
+  "name": "SEF (Suggestum Energeticum Flandrense)",
+  "version": "0.3.0",
+  "documentation": "https://energieplatform-vlaanderen.be/homeassistant.php",
+  "dependencies": ["recorder"],
+  "codeowners": [],
+  "requirements": [],
+  "iot_class": "cloud_polling"
+}

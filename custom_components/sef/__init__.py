@@ -1,0 +1,192 @@
+"""
+__init__.py
+~~~~~~~~~~~
+
+SEF in Home Assistant (ADR-0054, ADR-0064): prijssensoren uit `/mij/prijs` en
+`/mij/gasprijs`, elk kwartier de P1-kwartierwaarden en elk uur het gasverbruik
+naar SEF. Configuratie in YAML (zie README).
+
+:copyright: (c) 2026 Gert Botte
+:license: Alle rechten voorbehouden
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timedelta
+
+import aiohttp
+import voluptuous as vol
+
+from homeassistant.components import persistent_notification
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.discovery import async_load_platform
+from homeassistant.helpers.event import async_call_later, async_track_time_change
+from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
+
+from .p1 import BLOK, KANALEN, KWARTIER, UUR, gasrijen, in_stukken, kwartiergrens, kwartierrijen, uurgrens
+
+_LOGGER = logging.getLogger(__name__)
+DOMAIN = "sef"
+MAX_DAGEN_TERUG = 10  # zoals SEF en de bewaartermijn van de korte-termijnstatistieken
+
+CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({
+    vol.Optional("url", default="https://energieplatform-vlaanderen.be"): cv.url,  # enkel anders voor een test- of tailnet-adres
+    vol.Required("sleutel"): cv.string,          # API-sleutel, best via !secret
+    vol.Optional("meter"): vol.Match(r"^[0-9A-Za-z]{4,64}$"),
+    vol.Optional("afname_1"): cv.entity_id,      # telwerken (kWh, total_increasing)
+    vol.Optional("afname_2"): cv.entity_id,
+    vol.Optional("injectie_1"): cv.entity_id,
+    vol.Optional("injectie_2"): cv.entity_id,
+    vol.Optional("tarief_1", default="dag"): vol.In(["dag", "nacht"]),
+    vol.Optional("enkelvoudig", default=False): cv.boolean,
+    vol.Optional("gas"): cv.entity_id,           # gastelwerk (m³, total_increasing): upload + gasprijssensor
+})}, extra=vol.ALLOW_EXTRA)
+
+
+class SefFout(Exception):
+    """Een antwoord van SEF dat geen succes is; `code` uit Problem Details."""
+
+    def __init__(self, status: int, code: str, titel: str) -> None:
+        super().__init__(f"{status} {code}: {titel}")
+        self.status, self.code, self.titel = status, code, titel
+
+
+class SefClient:
+    """Dunne client voor `/api/v1` met een Bearer-sleutel."""
+
+    def __init__(self, sessie: aiohttp.ClientSession, url: str, sleutel: str) -> None:
+        self._sessie, self._basis, self._kop = sessie, url.rstrip("/") + "/api/v1", {"Authorization": f"Bearer {sleutel}"}
+
+    async def vraag(self, methode: str, pad: str, json: dict | None = None) -> dict:
+        async with self._sessie.request(methode, self._basis + pad, json=json, headers=self._kop,
+                                        timeout=aiohttp.ClientTimeout(total=60)) as antwoord:
+            inhoud = await antwoord.json(content_type=None)
+            if antwoord.status >= 400:
+                raise SefFout(antwoord.status, (inhoud or {}).get("code", "?"), (inhoud or {}).get("title", ""))
+            return inhoud
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Leest de YAML, start de sensoren en (met meter en telwerken) de upload elk kwartier."""
+    conf = config[DOMAIN]
+    client = SefClient(async_get_clientsession(hass), conf["url"], conf["sleutel"])
+    hass.data[DOMAIN] = {"client": client}
+    hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {"gas": "gas" in conf}, config))
+
+    telwerken = {k: conf[k] for k in KANALEN if k in conf}
+    if "meter" not in conf or not (telwerken or "gas" in conf):
+        _LOGGER.info("SEF: geen meter of telwerken ingesteld, enkel prijssensoren")
+        return True
+    if telwerken:
+        kwartier = _taak(hass, "sef_p1", "P1-upload", lambda: _upload(hass, client, conf, telwerken))
+        # Twee minuten na elk kwartier: de 5-minutenstatistiek van het laatste blok is dan klaar.
+        async_track_time_change(hass, kwartier, minute=[2, 17, 32, 47], second=0)
+        async_call_later(hass, 60, kwartier)
+    if "gas" in conf:
+        # Eigen taak en melding: een fout aan de gaskant stopt de elektriciteit niet (ADR-0064 §6).
+        uur = _taak(hass, "sef_p1_gas", "P1-gasupload", lambda: _upload_gas(hass, client, conf))
+        async_track_time_change(hass, uur, minute=7, second=0)
+        async_call_later(hass, 90, uur)
+    return True
+
+
+def _taak(hass: HomeAssistant, melding: str, naam: str, upload):
+    """Een tijdsgebonden upload die nooit twee keer tegelijk loopt; fouten van
+    SEF of een telwerk worden een melding (`melding` als id), een
+    netwerkfout probeert het volgende venster opnieuw."""
+    bezig = False
+
+    async def taak(_now: datetime | None = None) -> None:
+        nonlocal bezig
+        if bezig:  # een aanvulling van dagen kan langer duren dan een kwartier
+            return
+        bezig = True
+        try:
+            await upload()
+            persistent_notification.async_dismiss(hass, melding)
+        except SefFout as fout:
+            _LOGGER.error("SEF weigerde de %s: %s", naam, fout)
+            persistent_notification.async_create(hass, f"SEF weigerde de {naam} ({fout.code}): {fout.titel}",
+                                                 title="SEF", notification_id=melding)
+        except (aiohttp.ClientError, TimeoutError) as fout:
+            _LOGGER.warning("SEF niet bereikbaar, %s straks opnieuw: %s", naam, fout)
+        except ValueError as fout:  # telwerkfout uit p1.py: niet stil doorgaan
+            _LOGGER.error("%s: %s", naam, fout)
+            persistent_notification.async_create(hass, f"{naam} gestopt: {fout}", title="SEF",
+                                                 notification_id=melding)
+        finally:
+            bezig = False
+
+    return taak
+
+
+async def _venster(client: SefClient, energie: str, stap: timedelta, grens) -> tuple[dict, datetime, datetime] | None:
+    """(aansluiting, vanaf, tot): van na de laatste meting in SEF tot de laatste
+    grens (`grens`: kwartier- of uurgrens) vóór nu; None als er niets te doen is."""
+    aansluitingen = [a for a in (await client.vraag("GET", "/mij/aansluitingen"))["aansluitingen"]
+                     if a["energie"] == energie]
+    if len(aansluitingen) != 1:
+        raise SefFout(0, "AANSLUITING", f"{len(aansluitingen)} {energie}aansluitingen in SEF, verwacht één.")
+    aansluiting = aansluitingen[0]
+    nu = dt_util.utcnow()
+    if not aansluiting["laatste_meting"]:
+        raise SefFout(0, "GEEN_FLUVIUS_DATA", "Laad eerst een Fluvius-export op in SEF.")
+    vanaf = dt_util.parse_datetime(aansluiting["laatste_meting"]) + stap
+    if vanaf < nu - timedelta(days=MAX_DAGEN_TERUG):
+        raise SefFout(0, "GAT_NA_LAATSTE_METING",
+                      f"De meting in SEF stopt op {aansluiting['laatste_meting']}, langer dan {MAX_DAGEN_TERUG} "
+                      "dagen geleden. Laad eerst een nieuwe Fluvius-export op.")
+    tot = grens(nu)
+    return None if vanaf >= tot else (aansluiting, vanaf, tot)
+
+
+async def _blokken(hass: HomeAssistant, entiteiten: set[str], vanaf: datetime, tot: datetime) -> dict:
+    """Per entiteit het verbruik per 5-minutenblok (begin -> `change`)."""
+    ruw = await get_instance(hass).async_add_executor_job(
+        statistics_during_period, hass, vanaf, tot, entiteiten, "5minute", None, {"change"})
+    return {e: {dt_util.utc_from_timestamp(r["start"]): r["change"] for r in ruw.get(e, [])
+                if r.get("change") is not None} for e in entiteiten}
+
+
+async def _upload_gas(hass: HomeAssistant, client: SefClient, conf: dict) -> None:
+    """Het gasverbruik in m³ van elk volledig uur sinds de laatste gasmeting in
+    SEF (ADR-0064); SEF rekent om naar kWh."""
+    venster = await _venster(client, "gas", UUR, uurgrens)
+    if venster is None:
+        return
+    aansluiting, vanaf, tot = venster
+    blokken = (await _blokken(hass, {conf["gas"]}, vanaf, tot))[conf["gas"]]
+    if not blokken:
+        return
+    # Enkel uren waarvan het laatste blok al gecompileerd is: geen POST zonder nieuw uur (limiet).
+    tot = min(tot, uurgrens(max(blokken) + BLOK))
+    rijen = gasrijen(blokken, vanaf=vanaf, tot=tot)
+    for stuk in in_stukken(rijen):
+        uitslag = await client.vraag("POST", f"/mij/aansluitingen/{aansluiting['id']}/meetwaarden",
+                                     json={"meter": conf["meter"], "metingen": stuk})
+        _LOGGER.debug("SEF P1-gasupload: %s", {k: uitslag.get(k) for k in ("status", "rijen", "nieuw", "fluvius_behouden")})
+
+
+async def _upload(hass: HomeAssistant, client: SefClient, conf: dict, telwerken: dict[str, str]) -> None:
+    """Alles sinds de laatste meting in SEF, tot het laatste volledige kwartier."""
+    venster = await _venster(client, "elektriciteit", KWARTIER, kwartiergrens)
+    if venster is None:
+        return
+    aansluiting, vanaf, tot = venster
+    per_entiteit = await _blokken(hass, set(telwerken.values()), vanaf, tot)
+    blokken = {kanaal: per_entiteit[entiteit] for kanaal, entiteit in telwerken.items()}
+    # Enkel kwartieren waarvan het laatste blok al gecompileerd is.
+    laatste = max((t for b in blokken.values() for t in b), default=None)
+    if laatste is None:
+        return
+    tot = min(tot, kwartiergrens(laatste + BLOK))
+    rijen = kwartierrijen(blokken, vanaf=vanaf, tot=tot, tarief_1=conf["tarief_1"], enkelvoudig=conf["enkelvoudig"])
+    for stuk in in_stukken(rijen):
+        uitslag = await client.vraag("POST", f"/mij/aansluitingen/{aansluiting['id']}/meetwaarden",
+                                     json={"meter": conf["meter"], "metingen": stuk})
+        _LOGGER.debug("SEF P1-upload: %s", {k: uitslag.get(k) for k in ("status", "rijen", "nieuw", "fluvius_behouden")})
