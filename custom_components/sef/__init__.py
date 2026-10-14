@@ -3,15 +3,17 @@ __init__.py
 ~~~~~~~~~~~
 
 SEF in Home Assistant (ADR-0054, ADR-0064): prijssensoren uit `/mij/prijs` en
-`/mij/gasprijs`, elk kwartier de P1-kwartierwaarden en elk uur het gasverbruik
-naar SEF. Configuratie in YAML (zie README).
+`/mij/gasprijs`, waakhondsensoren uit `/mij/waakhond`, elk kwartier de
+P1-kwartierwaarden en elk uur het gasverbruik naar SEF. Instellen via de UI
+(`config_flow.py`); een `sef:`-blok in de YAML wordt daarin ingelezen.
 
 :copyright: (c) 2026 Gert Botte
-:license: Alle rechten voorbehouden
+:license: MIT, zie LICENSE
 """
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -20,10 +22,10 @@ import voluptuous as vol
 from homeassistant.components import persistent_notification
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.helpers.event import async_call_later, async_track_time_change
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
@@ -32,12 +34,16 @@ from .p1 import BLOK, KANALEN, KWARTIER, UUR, gasrijen, in_stukken, kwartiergren
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "sef"
+PLATFORMS = ["sensor"]
 MAX_DAGEN_TERUG = 10  # zoals SEF en de bewaartermijn van de korte-termijnstatistieken
+STANDAARD_URL = "https://energieplatform-vlaanderen.be"
+METER_PATROON = re.compile(r"[0-9A-Za-z]{4,64}")
+STANDAARD = {"url": STANDAARD_URL, "tarief_1": "dag", "enkelvoudig": False}
 
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({
-    vol.Optional("url", default="https://energieplatform-vlaanderen.be"): cv.url,  # enkel anders voor een test- of tailnet-adres
+    vol.Optional("url", default=STANDAARD_URL): cv.url,  # enkel anders voor een test- of tailnet-adres
     vol.Required("sleutel"): cv.string,          # API-sleutel, best via !secret
-    vol.Optional("meter"): vol.Match(r"^[0-9A-Za-z]{4,64}$"),
+    vol.Optional("meter"): vol.Match(METER_PATROON.pattern),
     vol.Optional("afname_1"): cv.entity_id,      # telwerken (kWh, total_increasing)
     vol.Optional("afname_2"): cv.entity_id,
     vol.Optional("injectie_1"): cv.entity_id,
@@ -72,27 +78,42 @@ class SefClient:
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Leest de YAML, start de sensoren en (met meter en telwerken) de upload elk kwartier."""
-    conf = config[DOMAIN]
+    """Een `sef:`-blok in de YAML gaat naar de config flow (nieuw of bijwerken)."""
+    if DOMAIN in config:
+        hass.async_create_task(hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_IMPORT}, data=dict(config[DOMAIN])))
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Start de sensoren en (met meter en telwerken) de upload elk kwartier en elk uur."""
+    conf = {**STANDAARD, **entry.data}
     client = SefClient(async_get_clientsession(hass), conf["url"], conf["sleutel"])
-    hass.data[DOMAIN] = {"client": client}
-    hass.async_create_task(async_load_platform(hass, "sensor", DOMAIN, {"gas": "gas" in conf}, config))
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"client": client, "conf": conf}
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     telwerken = {k: conf[k] for k in KANALEN if k in conf}
     if "meter" not in conf or not (telwerken or "gas" in conf):
-        _LOGGER.info("SEF: geen meter of telwerken ingesteld, enkel prijssensoren")
+        _LOGGER.info("SEF: geen meter of telwerken ingesteld, enkel prijs- en waakhondsensoren")
         return True
     if telwerken:
         kwartier = _taak(hass, "sef_p1", "P1-upload", lambda: _upload(hass, client, conf, telwerken))
         # Twee minuten na elk kwartier: de 5-minutenstatistiek van het laatste blok is dan klaar.
-        async_track_time_change(hass, kwartier, minute=[2, 17, 32, 47], second=0)
-        async_call_later(hass, 60, kwartier)
+        entry.async_on_unload(async_track_time_change(hass, kwartier, minute=[2, 17, 32, 47], second=0))
+        entry.async_on_unload(async_call_later(hass, 60, kwartier))
     if "gas" in conf:
         # Eigen taak en melding: een fout aan de gaskant stopt de elektriciteit niet (ADR-0064 §6).
         uur = _taak(hass, "sef_p1_gas", "P1-gasupload", lambda: _upload_gas(hass, client, conf))
-        async_track_time_change(hass, uur, minute=7, second=0)
-        async_call_later(hass, 90, uur)
+        entry.async_on_unload(async_track_time_change(hass, uur, minute=7, second=0))
+        entry.async_on_unload(async_call_later(hass, 90, uur))
     return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Sensoren weg; de tijdstriggers stopt `async_on_unload`."""
+    if ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        hass.data[DOMAIN].pop(entry.entry_id)
+    return ok
 
 
 def _taak(hass: HomeAssistant, melding: str, naam: str, upload):

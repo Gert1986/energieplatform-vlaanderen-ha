@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SEF: connection",
+        "description": "Create a Home Assistant key under My Energy platform → API keys. The key is shown once.",
+        "data": {
+          "url": "SEF address",
+          "sleutel": "API key (sef_…)"
+        }
+      },
+      "meter": {
+        "title": "SEF: P1 meter (optional)",
+        "description": "Leave empty for the price and watchdog sensors only. The meter ID is the serial number of your P1 meter (letters and digits); SEF binds the first upload to it and rejects a different ID afterwards.",
+        "data": {
+          "meter": "Meter ID",
+          "afname_1": "Import tariff 1 (kWh)",
+          "afname_2": "Import tariff 2 (kWh)",
+          "injectie_1": "Export tariff 1 (kWh)",
+          "injectie_2": "Export tariff 2 (kWh)",
+          "tarief_1": "Tariff 1 is",
+          "enkelvoudig": "Single-rate meter",
+          "gas": "Gas meter (m³)"
+        }
+      }
+    },
+    "error": {
+      "ongeldige_sleutel": "SEF rejects this key (revoked, expired or without dossier:lezen).",
+      "niet_bereikbaar": "SEF cannot be reached at this address.",
+      "onverwacht": "Unexpected answer from SEF; see the log.",
+      "meter_ongeldig": "Letters and digits only, 4 to 64 characters.",
+      "meter_nodig": "A meter ID is required with meters."
+    },
+    "abort": {
+      "already_configured": "SEF is already configured."
+    }
+  },
+  "selector": {
+    "tarief_1": {
+      "options": {
+        "dag": "day (Belgian convention)",
+        "nacht": "night"
+      }
+    }
+  }
+}

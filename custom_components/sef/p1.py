@@ -7,7 +7,7 @@ kwartierrijen (elektriciteit, ADR-0054) en uurrijen in m³ (gas, ADR-0064) die
 SEF verwacht. Puur: geen Home Assistant nodig.
 
 :copyright: (c) 2026 Gert Botte
-:license: Alle rechten voorbehouden
+:license: MIT, zie LICENSE
 """
 from __future__ import annotations
 

@@ -7,7 +7,7 @@ met nep-statistieken en een nep-SEF. Vraagt `homeassistant` (zie README);
 zonder wordt hij overgeslagen.
 
 :copyright: (c) 2026 Gert Botte
-:license: Alle rechten voorbehouden
+:license: MIT, zie LICENSE
 """
 from __future__ import annotations
 

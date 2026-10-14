@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SEF: verbinding",
+        "description": "Maak een Home Assistant-sleutel op Mijn Energieplatform → API-sleutels. De sleutel verschijnt één keer.",
+        "data": {
+          "url": "Adres van SEF",
+          "sleutel": "API-sleutel (sef_…)"
+        }
+      },
+      "meter": {
+        "title": "SEF: P1-meter (optioneel)",
+        "description": "Laat alles leeg voor enkel de prijs- en waakhondsensoren. Het meter-ID is het serienummer van je P1-meter (enkel letters en cijfers); SEF koppelt de eerste upload eraan en weigert daarna een ander ID.",
+        "data": {
+          "meter": "Meter-ID",
+          "afname_1": "Afname tarief 1 (kWh)",
+          "afname_2": "Afname tarief 2 (kWh)",
+          "injectie_1": "Injectie tarief 1 (kWh)",
+          "injectie_2": "Injectie tarief 2 (kWh)",
+          "tarief_1": "Tarief 1 is",
+          "enkelvoudig": "Enkelvoudige meter",
+          "gas": "Gastelwerk (m³)"
+        }
+      }
+    },
+    "error": {
+      "ongeldige_sleutel": "SEF weigert deze sleutel (ingetrokken, verlopen of zonder dossier:lezen).",
+      "niet_bereikbaar": "SEF is niet bereikbaar op dit adres.",
+      "onverwacht": "Onverwacht antwoord van SEF; zie het logboek.",
+      "meter_ongeldig": "Enkel letters en cijfers, 4 tot 64 tekens.",
+      "meter_nodig": "Met telwerken is een meter-ID nodig."
+    },
+    "abort": {
+      "already_configured": "SEF is al ingesteld."
+    }
+  },
+  "selector": {
+    "tarief_1": {
+      "options": {
+        "dag": "dag (Belgische afspraak)",
+        "nacht": "nacht"
+      }
+    }
+  }
+}

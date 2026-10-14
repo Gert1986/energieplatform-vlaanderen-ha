@@ -5,7 +5,7 @@ test_p1.py
 Van 5-minutenblokken naar kwartierrijen (`custom_components/sef/p1.py`).
 
 :copyright: (c) 2026 Gert Botte
-:license: Alle rechten voorbehouden
+:license: MIT, zie LICENSE
 """
 from __future__ import annotations
 

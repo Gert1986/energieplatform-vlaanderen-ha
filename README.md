@@ -1,11 +1,13 @@
-# SEF in Home Assistant (experiment)
+# SEF in Home Assistant
 
-Custom component `sef` (ADR-0054 en ADR-0064 in de SEF-repo). Doet drie dingen:
+Custom component `sef` (ADR-0054 en ADR-0064 in de SEF-repo), MIT-licentie. Werkt enkel met een account op
+[Energieplatform Vlaanderen](https://energieplatform-vlaanderen.be): alle cijfers komen van de rekenkern daar.
+Doet vier dingen:
 
 1. **Prijssensoren** `sensor.sef_afnameprijs` en `sensor.sef_injectieprijs`: wat één kWh nu kost (of
    opbrengt) met je huidige contract, all-in in EUR incl. btw, elk kwartier opgevraagd bij
-   `GET /api/v1/mij/prijs`. Bij een dynamisch contract staat de prijs per kwartier (vandaag, na 13 uur ook
-   morgen) in het attribuut `kwartieren`.
+   `GET /api/v1/mij/prijs`. De prijs per kwartier van vandaag en morgen staat in het attribuut `kwartieren`
+   (bij een dynamisch contract morgen pas na 13 uur; nooit voorbij het einde van de maand).
 2. **P1-upload**: twee minuten na elk kwartier leest hij de 5-minutenstatistieken van je vier
    P1-telwerken, maakt er kwartieren van en stuurt alles sinds de laatste meting in SEF naar
    `POST /api/v1/mij/aansluitingen/{id}/meetwaarden`. Een gemist kwartier (herstart) vult hij vanzelf aan,
@@ -16,7 +18,18 @@ Custom component `sef` (ADR-0054 en ADR-0064 in de SEF-repo). Doet drie dingen:
    gascontract (EUR/m³ incl. btw, de eenheid van je P1-gasmeter), elk uur opgevraagd bij
    `GET /api/v1/mij/gasprijs`.
 
-Status: experiment. Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.php. Later een eigen repo, met configuratiescherm en HACS.
+4. **Waakhond** (`GET /api/v1/mij/waakhond`, elk uur):
+   - `sensor.sef_besparing_elektriciteit` (EUR): wat het goedkoopste contract uit je laatste vergelijking
+     minder kost dan je huidige contract, over de periode van die vergelijking (attributen: welk contract,
+     de periode, wanneer vergeleken). Onbekend zonder vergelijking of zonder doorgerekend huidig contract;
+     het attribuut `reden` zegt waarom. Negatief = je huidige contract is goedkoper.
+   - `sensor.sef_contract_elektriciteit_dagen_tot_einde` (dagen): tot je lopende contract uit *Mijn
+     contracten* eindigt; onbekend zonder einddatum.
+   - Met gas (ingesteld, of een gascontract of -vergelijking in SEF) ook `…_gas`.
+
+   De besparing is zo recent als je laatste vergelijking: start er een op de website om ze te verversen.
+
+Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.php.
 
 ## Vooraf
 
@@ -43,14 +56,21 @@ Status: experiment. Download en uitleg ook op https://energieplatform-vlaanderen
 ## Installeren
 
 1. Kopieer de map `custom_components/sef/` naar `/config/custom_components/sef/` in Home Assistant
-   (bv. met de add-on *Samba share* of *Studio Code Server*).
-2. Zoek de entiteiten van de HomeWizard P1: *Instellingen → Ontwikkelhulpmiddelen → Statussen*, zoek op
+   (bv. met de add-on *Samba share* of *Studio Code Server*), of voeg deze repo in HACS toe als
+   *custom repository* (type *Integration*). Herstart Home Assistant.
+2. *Instellingen → Apparaten en diensten → Integratie toevoegen → SEF*. Eerst het adres (laat staan) en je
+   Home Assistant-sleutel; SEF controleert hem meteen. Daarna optioneel de P1-meter (punten 3 en 4): laat
+   alles leeg voor enkel de prijs- en waakhondsensoren.
+3. Zoek de entiteiten van de HomeWizard P1: *Instellingen → Ontwikkelhulpmiddelen → Statussen*, zoek op
    `energy_import_tariff` en `energy_export_tariff`. Het zijn kWh-tellers (`state_class: total_increasing`).
-3. Het meter-ID: het serienummer van de HomeWizard P1-meter (*Instellingen → Apparaten → HomeWizard →
+4. Het meter-ID: het serienummer van de HomeWizard P1-meter (*Instellingen → Apparaten → HomeWizard →
    apparaatinfo*), enkel letters en cijfers. SEF koppelt de eerste upload aan dit ID; een ander ID daarna
    wordt geweigerd. Kies het dus één keer en laat het staan.
-4. In `secrets.yaml`: `sef_sleutel: sef_...`
-5. In `configuration.yaml`:
+5. Klaar: na een minuut loopt de eerste upload. Meldingen van SEF verschijnen als melding in Home
+   Assistant (*SEF weigerde de P1-upload …*) en in het logboek.
+
+**Of in YAML** (zoals tot versie 0.3.0; wordt bij het opstarten in de integratie ingelezen, en een wijziging
+in de YAML werkt die bij). In `secrets.yaml`: `sef_sleutel: sef_...`, en in `configuration.yaml`:
    ```yaml
    sef:
      sleutel: !secret sef_sleutel
@@ -66,9 +86,36 @@ Status: experiment. Download en uitleg ook op https://energieplatform-vlaanderen
      logs:
        custom_components.sef: debug
    ```
-   Zonder `meter` of telwerken: enkel de prijssensoren.
-6. Herstart Home Assistant. Na een minuut loopt de eerste upload; meldingen van SEF verschijnen als
-   melding in Home Assistant (*SEF weigerde de P1-upload …*) en in het logboek.
+   Zonder `meter` of telwerken: enkel de prijs- en waakhondsensoren. Wie van 0.3.0 komt, houdt dezelfde
+   entiteiten (zelfde `unique_id`), dus ook het Energy-dashboard blijft werken.
+
+## Een melding als het goedkoper kan
+
+Voorbeeld van een automatisering (de besparing geldt voor de periode van je laatste vergelijking):
+
+```yaml
+automation:
+  - alias: SEF - goedkoper contract
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.sef_besparing_elektriciteit
+        above: 50
+    action:
+      - service: notify.notify
+        data:
+          message: >
+            {{ state_attr('sensor.sef_besparing_elektriciteit', 'beste_contract') }} kost
+            {{ states('sensor.sef_besparing_elektriciteit') }} EUR minder dan je huidige contract.
+  - alias: SEF - contract loopt af
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.sef_contract_elektriciteit_dagen_tot_einde
+        below: 31
+    action:
+      - service: notify.notify
+        data:
+          message: Je elektriciteitscontract loopt over {{ states('sensor.sef_contract_elektriciteit_dagen_tot_einde') }} dagen af.
+```
 
 ## Energy-dashboard
 
@@ -94,8 +141,10 @@ kWh en de gebruikte omrekening (kWh per m³ en de maand waarvan ze komt).
 
 ## Tests
 
-De rekenlogica (`p1.py`) heeft geen Home Assistant nodig:
+De rekenlogica (`p1.py`) heeft geen Home Assistant nodig; de upload vraagt `homeassistant`, het
+configuratiescherm en de sensoren `pytest-homeassistant-custom-component` (anders overgeslagen):
 
 ```bash
+pip install "pytest-homeassistant-custom-component==0.13.205"   # hoort bij Home Assistant 2025.1.4
 python -m pytest -q tests
 ```
