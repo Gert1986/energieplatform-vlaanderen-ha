@@ -58,7 +58,7 @@ Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.ph
 1. Kopieer de map `custom_components/sef/` naar `/config/custom_components/sef/` in Home Assistant
    (bv. met de add-on *Samba share* of *Studio Code Server*), of voeg deze repo in HACS toe als
    *custom repository* (type *Integration*). Herstart Home Assistant.
-2. *Instellingen → Apparaten en diensten → Integratie toevoegen → SEF*. Eerst het adres (laat staan) en je
+2. *Instellingen → Apparaten en diensten → Integratie toevoegen → Energieplatform Vlaanderen*. Eerst het adres (laat staan) en je
    Home Assistant-sleutel; SEF controleert hem meteen. Daarna optioneel de P1-meter (punten 3 en 4): laat
    alles leeg voor enkel de prijs- en waakhondsensoren. Later de meter of telwerken toevoegen of wijzigen:
    de integratie verwijderen en opnieuw toevoegen (een optiescherm is er nog niet; het meter-ID wijzig je best

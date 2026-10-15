@@ -1,6 +1,6 @@
 {
   "domain": "sef",
-  "name": "SEF (Suggestum Energeticum Flandrense)",
+  "name": "Energieplatform Vlaanderen",
   "codeowners": [],
   "config_flow": true,
   "dependencies": [
