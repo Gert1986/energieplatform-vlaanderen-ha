@@ -62,9 +62,13 @@ Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.ph
 
 ## Installeren
 
-1. Kopieer de map `custom_components/sef/` naar `/config/custom_components/sef/` in Home Assistant
-   (bv. met de add-on *Samba share* of *Studio Code Server*), of voeg deze repo in HACS toe als
-   *custom repository* (type *Integration*). Herstart Home Assistant.
+1. **Met HACS:** *HACS → ⋮ (drie puntjes) → Aangepaste repositories*, plak
+   `https://github.com/Gert1986/energieplatform-vlaanderen-ha`, kies type *Integratie* en voeg toe. Zoek
+   daarna *Energieplatform Vlaanderen* in HACS, download en herstart Home Assistant. Een nieuwe versie
+   verschijnt dan vanzelf als update in HACS.
+   **Zonder HACS:** kopieer de map `custom_components/sef/` naar `/config/custom_components/sef/` (bv. met de
+   add-on *Samba share* of *Studio Code Server*), of pak de zip van
+   <https://energieplatform-vlaanderen.be/homeassistant.php> daar uit. Herstart Home Assistant.
 2. *Instellingen → Apparaten en diensten → Integratie toevoegen → Energieplatform Vlaanderen*. Eerst het adres (laat staan) en je
    Home Assistant-sleutel; SEF controleert hem meteen. Daarna optioneel de P1-meter (punten 3 en 4): laat
    alles leeg voor enkel de prijs- en waakhondsensoren. Later de meter of telwerken toevoegen of wijzigen:
