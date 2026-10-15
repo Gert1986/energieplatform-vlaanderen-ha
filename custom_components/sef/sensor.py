@@ -51,9 +51,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         return c
 
     prijs = await coordinator("SEF prijs", "/mij/prijs", INTERVAL)
-    sensoren: list[SensorEntity] = [SefPrijs(prijs, "afname"), SefPrijs(prijs, "injectie")]
+    sensoren: list[SensorEntity] = [SefPrijs(prijs, "afname"), SefPrijs(prijs, "injectie"),
+                                    SefContract(prijs, "elektriciteit")]
     if "gas" in conf:
-        sensoren.append(SefGasprijs(await coordinator("SEF gasprijs", "/mij/gasprijs", GAS_INTERVAL)))
+        gasprijs = await coordinator("SEF gasprijs", "/mij/gasprijs", GAS_INTERVAL)
+        sensoren += [SefGasprijs(gasprijs), SefContract(gasprijs, "gas")]
     waakhond = await coordinator("SEF waakhond", "/mij/waakhond", WAAKHOND_INTERVAL)
     gas_in_sef = any(((waakhond.data or {}).get("gas") or {}).get(k) for k in ("contract", "vergelijking"))
     for energie in ("elektriciteit", "gas") if "gas" in conf or gas_in_sef else ("elektriciteit",):
@@ -118,6 +120,31 @@ class SefGasprijs(CoordinatorEntity, SensorEntity):
             "kwh_per_m3": None if data.get("gas_kwh_per_m3") is None else float(data["gas_kwh_per_m3"]),
             "kwh_per_m3_maand": data.get("gas_kwh_per_m3_maand"), "waarschuwingen": data.get("waarschuwingen", []),
         }
+
+
+class SefContract(CoordinatorEntity, SensorEntity):
+    """Je huidige contract zoals SEF ermee rekent: leverancier en product, met
+    een link naar de tariefkaart die de prijs bepaalt (null zonder gekende
+    kaart, bv. een prijs uit het VREG-werkboek). Uit dezelfde opvraging als de
+    prijssensor, geen extra verzoek. Zonder contract in SEF: onbeschikbaar."""
+
+    _attr_icon = "mdi:file-document-outline"
+
+    def __init__(self, coordinator: DataUpdateCoordinator, energie: str) -> None:
+        super().__init__(coordinator)
+        self._attr_name = f"SEF contract {energie}"
+        self._attr_unique_id = f"sef_contract_{energie}"
+
+    @property
+    def native_value(self) -> str | None:
+        data = self.coordinator.data or {}
+        return " ".join(filter(None, (data.get("leverancier"), data.get("product")))) or None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        return {k: data.get(k) for k in ("leverancier", "product", "contracttype", "vreg_id", "prijsbron",
+                                         "contractdatum", "tariefkaart_url")}
 
 
 def _naam(contract: dict | None) -> str | None:

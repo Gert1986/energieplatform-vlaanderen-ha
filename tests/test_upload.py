@@ -114,3 +114,38 @@ def test_gasupload_stuurt_enkel_volledige_uren_in_m3(statistiek, monkeypatch):
     ((pad, body),) = client.posts
     assert pad == "/mij/aansluitingen/8/meetwaarden"
     assert body == {"meter": "5c2fafabcdef", "metingen": [{"tijdstip": "2026-10-06T07:00:00+00:00", "m3": "0.120000"}]}
+
+
+def _recorder(monkeypatch, per_entiteit: dict):
+    """Nep-recorder die per entiteit de gegeven rijen teruggeeft (ontbrekend = geen statistiek)."""
+    class Recorder:
+        async def async_add_executor_job(self, functie, hass, start, eind, ids, periode, eenheden, soorten):
+            return per_entiteit
+    monkeypatch.setattr(sef, "get_instance", lambda hass: Recorder())
+
+
+def test_gastelwerk_zonder_statistiek_stopt_met_melding(statistiek, monkeypatch):
+    """Een gasentiteit zonder statistiek (bv. een oud of verkeerd entity-ID) stopte vroeger stil: geen POST,
+    geen melding. Nu een ValueError met de entiteit erin, die `_taak` als melding in HA toont."""
+    _recorder(monkeypatch, {})
+    client = NepClient("2026-10-06T07:45:00+00:00", "2026-10-06T06:00:00+00:00")
+    with pytest.raises(ValueError, match="sensor.gas"):
+        asyncio.run(sef._upload_gas(None, client, {**CONF, "gas": "sensor.gas"}))
+    assert client.posts == []
+
+
+def test_een_telwerk_zonder_statistiek_telt_niet_stil_als_nul(statistiek, monkeypatch):
+    begin = datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc)
+    rijen = [{"start": (begin + timedelta(minutes=5 * i)).timestamp(), "change": 0.1} for i in range(9)]
+    _recorder(monkeypatch, {"sensor.t1": rijen})  # sensor.e1 (injectie) heeft geen statistiek
+    client = NepClient("2026-10-06T07:45:00+00:00")
+    with pytest.raises(ValueError, match="sensor.e1"):
+        asyncio.run(sef._upload(None, client, CONF, TELWERKEN))
+    assert client.posts == []
+
+
+def test_kort_leeg_venster_wacht_stil_op_de_recorder(statistiek, monkeypatch):
+    _recorder(monkeypatch, {})
+    client = NepClient("2026-10-06T08:15:00+00:00")  # venster 08:30-08:45: recorder nog niet bij
+    asyncio.run(sef._upload(None, client, CONF, TELWERKEN))
+    assert client.posts == []

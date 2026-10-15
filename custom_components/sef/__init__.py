@@ -167,11 +167,23 @@ async def _venster(client: SefClient, energie: str, stap: timedelta, grens) -> t
 
 
 async def _blokken(hass: HomeAssistant, entiteiten: set[str], vanaf: datetime, tot: datetime) -> dict:
-    """Per entiteit het verbruik per 5-minutenblok (begin -> `change`)."""
+    """Per entiteit het verbruik per 5-minutenblok (begin -> `change`).
+    Een telwerk zonder statistiek telt niet stil als 0: ValueError (melding in
+    HA) als een ander telwerk in hetzelfde venster wel blokken heeft, of als er
+    over een uur of meer geen enkel blok is. Een korter leeg venster is gewoon
+    de recorder die nog niet bij is."""
     ruw = await get_instance(hass).async_add_executor_job(
         statistics_during_period, hass, vanaf, tot, entiteiten, "5minute", None, {"change"})
-    return {e: {dt_util.utc_from_timestamp(r["start"]): r["change"] for r in ruw.get(e, [])
-                if r.get("change") is not None} for e in entiteiten}
+    blokken = {e: {dt_util.utc_from_timestamp(r["start"]): r["change"] for r in ruw.get(e, [])
+                   if r.get("change") is not None} for e in entiteiten}
+    leeg = sorted(e for e, b in blokken.items() if not b)
+    if leeg and (len(leeg) < len(blokken) or tot - vanaf >= UUR):
+        raise ValueError(
+            f"geen 5-minutenstatistieken voor {', '.join(leeg)} sinds {dt_util.as_local(vanaf):%d/%m %H:%M}. "
+            "Bestaat die entiteit en is het een telwerk (kWh of m³, state_class total_increasing)? "
+            "Kijk in Ontwikkelhulpmiddelen → Statistieken; bij HomeWizard staat het gastelwerk op een eigen "
+            "apparaat (Gas meter).")
+    return blokken
 
 
 async def _upload_gas(hass: HomeAssistant, client: SefClient, conf: dict) -> None:

@@ -36,6 +36,7 @@ WAAKHOND = {
 ANTWOORDEN = {
     "/mij/aansluitingen": {"aansluitingen": []},
     "/mij/prijs": {"leverancier": "ENGIE", "product": "Easy", "contracttype": "vast", "zone_nu": "dag",
+                   "vreg_id": "77", "tariefkaart_url": "https://engie.be/kaart.pdf",
                    "afname_nu": "0.350406532", "injectie_nu": "0.04161", "waarschuwingen": [],
                    "kwartieren": [{"tijdstip": "2026-10-14T00:00:00+02:00", "zone": "nacht", "spot_eur_mwh": None,
                                    "afname": "0.31", "injectie": "0.04"}]},
@@ -78,6 +79,9 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
     assert (besparing.state, besparing.attributes["beste_contract"]) == ("112.39", "Bolt Vast")
     assert besparing.attributes["periode_van"] == "2025-10-01"
     assert hass.states.get("sensor.sef_contract_elektriciteit_dagen_tot_einde").state == "199"
+    contract = hass.states.get("sensor.sef_contract_elektriciteit")
+    assert contract.state == "ENGIE Easy" and contract.attributes["tariefkaart_url"] == "https://engie.be/kaart.pdf"
+    assert contract.attributes["vreg_id"] == "77"
     assert hass.states.get("sensor.sef_besparing_gas") is None
     assert hass.states.get("sensor.sef_afnameprijs").attributes["kwartieren"] == [
         {"start": "2026-10-14T00:00:00+02:00", "prijs": 0.31}]

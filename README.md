@@ -8,6 +8,10 @@ Doet vier dingen:
    opbrengt) met je huidige contract, all-in in EUR incl. btw, elk kwartier opgevraagd bij
    `GET /api/v1/mij/prijs`. De prijs per kwartier van vandaag en morgen staat in het attribuut `kwartieren`
    (bij een dynamisch contract morgen pas na 13 uur; nooit voorbij het einde van de maand).
+   Uit dezelfde opvraging: `sensor.sef_contract_elektriciteit` (met gas ook `sensor.sef_contract_gas`, uit
+   `/mij/gasprijs`): leverancier en product van je huidige contract, met de attributen `contracttype`,
+   `vreg_id`, `prijsbron`, `contractdatum` en `tariefkaart_url` (de kaart die de prijs bepaalt; leeg als die
+   niet gekend is, bv. bij een prijs uit het VREG-werkboek). Sinds 0.5.0.
 2. **P1-upload**: twee minuten na elk kwartier leest hij de 5-minutenstatistieken van je vier
    P1-telwerken, maakt er kwartieren van en stuurt alles sinds de laatste meting in SEF naar
    `POST /api/v1/mij/aansluitingen/{id}/meetwaarden`. Een gemist kwartier (herstart) vult hij vanzelf aan,
@@ -17,6 +21,9 @@ Doet vier dingen:
    Fluvius-gasexport. Plus de sensor `sensor.sef_gasprijs`: wat één m³ gas nu kost met je huidige
    gascontract (EUR/m³ incl. btw, de eenheid van je P1-gasmeter), elk uur opgevraagd bij
    `GET /api/v1/mij/gasprijs`.
+   Het gastelwerk moet een statistiek hebben (Ontwikkelhulpmiddelen → Statistieken, eenheid m³). Zonder
+   statistiek kan er niets geüpload worden; sinds 0.4.1 meldt de integratie dat in plaats van stil te stoppen
+   (ook voor een elektriciteitstelwerk zonder statistiek, dat anders als 0 kWh telde).
 
 4. **Waakhond** (`GET /api/v1/mij/waakhond`, elk uur):
    - `sensor.sef_besparing_elektriciteit` (EUR): wat het goedkoopste contract uit je laatste vergelijking
@@ -83,7 +90,7 @@ in de YAML werkt die bij). In `secrets.yaml`: `sef_sleutel: sef_...`, en in `con
      injectie_2: sensor.p1_meter_energy_export_tariff_2
      tarief_1: dag                  # Belgische afspraak: 1.8.1/2.8.1 = dag. Omgekeerd? Zet nacht.
      # enkelvoudig: true            # enkel bij een enkelvoudige meter
-     gas: sensor.p1_meter_total_gas # optioneel: gastelwerk in m³ (upload + gasprijssensor)
+     gas: sensor.gas_meter_gas     # optioneel: gastelwerk in m³ (HomeWizard: apparaat "Gas meter")
    logger:
      logs:
        custom_components.sef: debug
@@ -127,7 +134,7 @@ automation:
 met de huidige prijs" → `sensor.sef_afnameprijs`; bij elk injectietelwerk → `sensor.sef_injectieprijs`.
 De vaste kosten (vaste vergoeding, capaciteitstarief) zitten bewust niet in die prijs.
 
-*Gas*: bij het gastelwerk (`sensor.p1_meter_total_gas`) "Gebruik een entiteit met de huidige prijs" →
+*Gas*: bij het gastelwerk (`sensor.gas_meter_gas`) "Gebruik een entiteit met de huidige prijs" →
 `sensor.sef_gasprijs`. Ook hier zonder vaste vergoeding en vaste netkost. De attributen tonen de prijs per
 kWh en de gebruikte omrekening (kWh per m³ en de maand waarvan ze komt).
 
