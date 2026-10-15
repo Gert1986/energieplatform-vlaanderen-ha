@@ -1,7 +1,14 @@
-# SEF in Home Assistant
+# Energieplatform Vlaanderen voor Home Assistant
 
-Custom component `sef` (ADR-0054 en ADR-0064 in de SEF-repo), MIT-licentie. Werkt enkel met een account op
-[Energieplatform Vlaanderen](https://energieplatform-vlaanderen.be): alle cijfers komen van de rekenkern daar.
+Home Assistant-integratie (domein `sef`, MIT-licentie) van
+[Energieplatform Vlaanderen](https://energieplatform-vlaanderen.be), het onafhankelijke platform dat elk
+Vlaams energiecontract doorrekent op je eigen meetdata. Werkt enkel met een account daar: alle cijfers komen
+van de rekenkern van het platform.
+
+**Documentatie en uitleg:** <https://energieplatform-vlaanderen.be/homeassistant.php> ·
+**Je account en sleutel:** <https://energieplatform-vlaanderen.be/mijn/homeassistant.php> ·
+**Installeren:** via HACS (aangepaste repository, zie [Installeren](#installeren)).
+
 Doet vier dingen:
 
 1. **Prijssensoren** `sensor.sef_afnameprijs` en `sensor.sef_injectieprijs`: wat één kWh nu kost (of
