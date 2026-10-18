@@ -278,7 +278,9 @@ class SefKostMaand(_SefVoorschot):
 
 class SefJaarschatting(_SefVoorschot):
     """Wat je verbruik van de laatste 12 volle maanden kost met je huidige
-    contract, met 12 × je voorschot en het aangeraden maandvoorschot."""
+    contract, met 12 × je voorschot en het aangeraden maandvoorschot. Voor gas
+    ook de kost bij normaal weer (graaddagen van de 10 vorige jaren); het
+    aangeraden voorschot volgt dan dat normale jaar."""
 
     def __init__(self, coordinator: DataUpdateCoordinator, energie: str) -> None:
         super().__init__(coordinator, energie, "jaarschatting", "jaarschatting")
@@ -290,11 +292,17 @@ class SefJaarschatting(_SefVoorschot):
     @property
     def extra_state_attributes(self) -> dict:
         j = self._deel("jaar")
+        n = j.get("normaal") or {}  # enkel gas: bij normaal weer (sinds 0.7.0)
         return {
             "voorschot_jaar": _getal(j.get("voorschot_eur")), "saldo": _getal(j.get("saldo_eur")),
             "aangeraden_voorschot": _getal(j.get("aangeraden_voorschot_eur")),
             "van": j.get("van"), "tot": j.get("tot"), "contract": self._a().get("contract"),
             "reden": self._reden("jaar"), "waarschuwingen": j.get("waarschuwingen", []),
+            "normaal_kost": _getal(n.get("kost_eur")), "normaal_saldo": _getal(n.get("saldo_eur")),
+            "graaddagen": _getal(n.get("graaddagen")), "graaddagen_normaal": _getal(n.get("graaddagen_normaal")),
+            "referentie": None if not n.get("referentie_van") else f"{n['referentie_van']}-{n['referentie_tot']}",
+            "referentie_jaren": n.get("referentie_jaren"),
+            "normaal_reden": n.get("reden"),
         }
 
 
@@ -316,4 +324,5 @@ class SefVoorschotSaldo(_SefVoorschot):
         if reden is None and self._a() and self._a().get("voorschot_eur_maand") is None:
             reden = "Geef je maandvoorschot in op de website (Mijn voorschot)."
         return {"voorschot_maand": _getal(self._a().get("voorschot_eur_maand")),
-                "aangeraden_voorschot": _getal(j.get("aangeraden_voorschot_eur")), "reden": reden}
+                "aangeraden_voorschot": _getal(j.get("aangeraden_voorschot_eur")), "reden": reden,
+                "normaal_saldo": _getal((j.get("normaal") or {}).get("saldo_eur"))}

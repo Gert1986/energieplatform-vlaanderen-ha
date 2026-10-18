@@ -49,7 +49,17 @@ ANTWOORDEN = {
          "vorige_maand": {"van": "2026-09-01", "tot": "2026-10-01", "kost_eur": "88.40", "reden": None,
                           "waarschuwingen": [], "voorschot_eur": "93.00", "verschil_eur": "-4.60"},
          "jaar": {"van": "2025-10-01", "tot": "2026-10-01", "kost_eur": "1234.56", "reden": None, "waarschuwingen": [],
-                  "voorschot_eur": "1116.00", "saldo_eur": "118.56", "aangeraden_voorschot_eur": "103"}}]},
+                  "voorschot_eur": "1116.00", "saldo_eur": "118.56", "aangeraden_voorschot_eur": "103",
+                  "normaal": None}},
+        {"aansluiting": 2, "energie": "gas", "contract": "ENGIE Easy", "voorschot_eur_maand": "100.00", "reden": None,
+         "maand": None, "vorige_maand": {"van": "2026-09-01", "tot": "2026-10-01", "kost_eur": "24.56", "reden": None,
+                                         "waarschuwingen": [], "voorschot_eur": "100.00", "verschil_eur": "-75.44"},
+         "jaar": {"van": "2025-10-01", "tot": "2026-10-01", "kost_eur": "1241.62", "reden": None, "waarschuwingen": [],
+                  "voorschot_eur": "1200.00", "saldo_eur": "41.62", "aangeraden_voorschot_eur": "113",
+                  "normaal": {"kost_eur": "1350.10", "saldo_eur": "150.10", "correctie_eur": "108.48",
+                              "extra_kwh": "986.2", "graaddagen": "2200.5", "graaddagen_normaal": "2420.0",
+                              "station": 6434, "referentie_van": 2015, "referentie_tot": 2025, "referentie_jaren": 9,
+                              "reden": None}}}]},
 }
 
 
@@ -97,7 +107,13 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
     jaar = hass.states.get("sensor.sef_jaarschatting_elektriciteit")
     assert (jaar.state, jaar.attributes["aangeraden_voorschot"]) == ("1234.56", 103.0)
     assert hass.states.get("sensor.sef_voorschot_saldo_elektriciteit").state == "118.56"
-    assert hass.states.get("sensor.sef_jaarschatting_gas") is None
+    # Gas staat in SEF (aansluiting 2): ook zonder gastelwerk de voorschotsensoren, met het normale jaar.
+    gasjaar = hass.states.get("sensor.sef_jaarschatting_gas")
+    assert (gasjaar.state, gasjaar.attributes["normaal_kost"], gasjaar.attributes["referentie"]) == \
+        ("1241.62", 1350.1, "2015-2025")
+    assert gasjaar.attributes["referentie_jaren"] == 9
+    assert hass.states.get("sensor.sef_voorschot_saldo_gas").attributes["normaal_saldo"] == 150.1
+    assert jaar.attributes["normaal_kost"] is None  # elektriciteit: geen weercorrectie
     assert hass.states.get("sensor.sef_afnameprijs").attributes["kwartieren"] == [
         {"start": "2026-10-14T00:00:00+02:00", "prijs": 0.31}]
 

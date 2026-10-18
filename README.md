@@ -54,7 +54,11 @@ Doet vier dingen:
      met minder dan 12 volle maanden meetdata; `reden` zegt waarom.
    - `sensor.sef_voorschot_saldo_elektriciteit` (EUR): jaarschatting min 12 × je voorschot; positief =
      bijbetalen op de afrekening, negatief = terugkrijgen.
-   - Met gas (ingesteld, of een gasaansluiting in SEF) ook `…_gas`.
+   - Met gas (ingesteld, of een gasaansluiting in SEF) ook `…_gas`. Sinds 0.7.0 heeft
+     `sensor.sef_jaarschatting_gas` ook de kost bij normaal weer: `normaal_kost`, `normaal_saldo`,
+     `graaddagen` (het gemeten jaar), `graaddagen_normaal` (gemiddelde van dezelfde maanden in de 10 vorige
+     jaren, KMI-station van je provincie), `referentie`, `referentie_jaren` (volledige jaren die meetelden, minstens 8) en `normaal_reden`. Het aangeraden voorschot volgt
+     voor gas dat normale jaar. `sensor.sef_voorschot_saldo_gas` krijgt het attribuut `normaal_saldo`.
 
 Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.php.
 
