@@ -41,6 +41,15 @@ ANTWOORDEN = {
                    "kwartieren": [{"tijdstip": "2026-10-14T00:00:00+02:00", "zone": "nacht", "spot_eur_mwh": None,
                                    "afname": "0.31", "injectie": "0.04"}]},
     "/mij/waakhond": WAAKHOND,
+    "/mij/voorschot": {"eenheid": "EUR incl. btw", "aansluitingen": [
+        {"aansluiting": 1, "energie": "elektriciteit", "contract": "ENGIE Easy", "voorschot_eur_maand": "93.00",
+         "reden": None,
+         "maand": {"van": "2026-10-01", "tot": "2026-10-17", "kost_eur": "51.20", "reden": None, "waarschuwingen": [],
+                   "voorschot_eur": "48", "verschil_eur": "3.20"},
+         "vorige_maand": {"van": "2026-09-01", "tot": "2026-10-01", "kost_eur": "88.40", "reden": None,
+                          "waarschuwingen": [], "voorschot_eur": "93.00", "verschil_eur": "-4.60"},
+         "jaar": {"van": "2025-10-01", "tot": "2026-10-01", "kost_eur": "1234.56", "reden": None, "waarschuwingen": [],
+                  "voorschot_eur": "1116.00", "saldo_eur": "118.56", "aangeraden_voorschot_eur": "103"}}]},
 }
 
 
@@ -83,6 +92,12 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
     assert contract.state == "ENGIE Easy" and contract.attributes["tariefkaart_url"] == "https://engie.be/kaart.pdf"
     assert contract.attributes["vreg_id"] == "77"
     assert hass.states.get("sensor.sef_besparing_gas") is None
+    maand = hass.states.get("sensor.sef_kost_deze_maand_elektriciteit")
+    assert (maand.state, maand.attributes["voorschot_tot_nu"], maand.attributes["verschil"]) == ("51.2", 48.0, 3.2)
+    jaar = hass.states.get("sensor.sef_jaarschatting_elektriciteit")
+    assert (jaar.state, jaar.attributes["aangeraden_voorschot"]) == ("1234.56", 103.0)
+    assert hass.states.get("sensor.sef_voorschot_saldo_elektriciteit").state == "118.56"
+    assert hass.states.get("sensor.sef_jaarschatting_gas") is None
     assert hass.states.get("sensor.sef_afnameprijs").attributes["kwartieren"] == [
         {"start": "2026-10-14T00:00:00+02:00", "prijs": 0.31}]
 

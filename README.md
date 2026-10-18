@@ -43,6 +43,19 @@ Doet vier dingen:
 
    De besparing is zo recent als je laatste vergelijking: start er een op de website om ze te verversen.
 
+5. **Voorschot** (`GET /api/v1/mij/voorschot`, elk uur; sinds 0.6.0). Geef je maandvoorschot in op de
+   website (*Mijn voorschot*); SEF rekent de kost met je huidige contract op je eigen meting:
+   - `sensor.sef_kost_deze_maand_elektriciteit` (EUR): wat je verbruik deze maand al kostte, tot de laatste
+     volledige meetdag. Attributen: `voorschot_maand`, `voorschot_tot_nu` (je voorschot voor dezelfde
+     dagen, naar rato), `verschil` (positief = meer dan je voorschot), `vorige_maand_kost` en
+     `vorige_maand_verschil`.
+   - `sensor.sef_jaarschatting_elektriciteit` (EUR): de kost van de laatste 12 volle maanden met je huidige
+     contract. Attributen: `voorschot_jaar` (12 × je voorschot), `saldo` en `aangeraden_voorschot`. Onbekend
+     met minder dan 12 volle maanden meetdata; `reden` zegt waarom.
+   - `sensor.sef_voorschot_saldo_elektriciteit` (EUR): jaarschatting min 12 × je voorschot; positief =
+     bijbetalen op de afrekening, negatief = terugkrijgen.
+   - Met gas (ingesteld, of een gasaansluiting in SEF) ook `…_gas`.
+
 Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.php.
 
 ## Vooraf

@@ -7,6 +7,8 @@ injectie, nu, met de prijs per kwartier van vandaag en morgen als attribuut.
 Met `gas` ook `/mij/gasprijs`: EUR/m³ incl. btw (ADR-0064). Waakhond uit
 `/mij/waakhond`: wat het goedkoopste contract uit je laatste vergelijking
 minder kost dan je huidige, en het aantal dagen tot je contract eindigt.
+Voorschot uit `/mij/voorschot` (ADR-0078): de kost van deze maand en de
+jaarinschatting tegenover je maandvoorschot, en het saldo op de afrekening.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -33,6 +35,8 @@ INTERVAL = timedelta(minutes=15)
 GAS_INTERVAL = timedelta(hours=1)
 # De waakhond leest enkel bewaarde vergelijkingen; die wijzigen als je er een start.
 WAAKHOND_INTERVAL = timedelta(hours=1)
+# De kosten volgen de meting (P1 elk kwartier, maar SEF rekent per volledige dag); elk uur volstaat.
+VOORSCHOT_INTERVAL = timedelta(hours=1)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
@@ -60,6 +64,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     gas_in_sef = any(((waakhond.data or {}).get("gas") or {}).get(k) for k in ("contract", "vergelijking"))
     for energie in ("elektriciteit", "gas") if "gas" in conf or gas_in_sef else ("elektriciteit",):
         sensoren += [SefBesparing(waakhond, energie), SefContractEinde(waakhond, energie)]
+    voorschot = await coordinator("SEF voorschot", "/mij/voorschot", VOORSCHOT_INTERVAL)
+    gas_voorschot = any(a.get("energie") == "gas" for a in (voorschot.data or {}).get("aansluitingen", []))
+    for energie in ("elektriciteit", "gas") if "gas" in conf or gas_voorschot else ("elektriciteit",):
+        sensoren += [SefKostMaand(voorschot, energie), SefJaarschatting(voorschot, energie),
+                     SefVoorschotSaldo(voorschot, energie)]
     async_add_entities(sensoren)
 
 
@@ -211,3 +220,100 @@ class SefContractEinde(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict:
         c = self._contract()
         return {"contract": _naam(c or None), "van": c.get("van"), "tot": c.get("tot")}
+
+
+def _getal(waarde: str | None) -> float | None:
+    return None if waarde is None else float(waarde)
+
+
+class _SefVoorschot(CoordinatorEntity, SensorEntity):
+    """Basis voor de voorschotsensoren: de eerste aansluiting van `energie` in
+    `/mij/voorschot`. Bedragen in EUR incl. btw; onbekend met `reden`."""
+
+    _attr_native_unit_of_measurement = "EUR"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator: DataUpdateCoordinator, energie: str, naam: str, sleutel: str) -> None:
+        super().__init__(coordinator)
+        self._energie = energie
+        self._attr_name = f"SEF {naam} {energie}"
+        self._attr_unique_id = f"sef_{sleutel}_{energie}"
+
+    def _a(self) -> dict:
+        return next((a for a in (self.coordinator.data or {}).get("aansluitingen", [])
+                     if a.get("energie") == self._energie), {})
+
+    def _deel(self, naam: str) -> dict:
+        return self._a().get(naam) or {}
+
+    def _reden(self, naam: str) -> str | None:
+        return self._a().get("reden") or self._deel(naam).get("reden")
+
+
+class SefKostMaand(_SefVoorschot):
+    """Wat je verbruik deze maand al kostte, tot de laatste volledige meetdag,
+    met het voorschot voor diezelfde dagen (naar rato) en het verschil
+    (positief = meer dan je voorschot)."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator, energie: str) -> None:
+        super().__init__(coordinator, energie, "kost deze maand", "kost_maand")
+
+    @property
+    def native_value(self) -> float | None:
+        return _getal(self._deel("maand").get("kost_eur"))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        m, v = self._deel("maand"), self._deel("vorige_maand")
+        return {
+            "voorschot_maand": _getal(self._a().get("voorschot_eur_maand")),
+            "voorschot_tot_nu": _getal(m.get("voorschot_eur")), "verschil": _getal(m.get("verschil_eur")),
+            "van": m.get("van"), "tot": m.get("tot"),
+            "vorige_maand_kost": _getal(v.get("kost_eur")), "vorige_maand_verschil": _getal(v.get("verschil_eur")),
+            "contract": self._a().get("contract"), "reden": self._reden("maand"),
+            "waarschuwingen": m.get("waarschuwingen", []),
+        }
+
+
+class SefJaarschatting(_SefVoorschot):
+    """Wat je verbruik van de laatste 12 volle maanden kost met je huidige
+    contract, met 12 × je voorschot en het aangeraden maandvoorschot."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator, energie: str) -> None:
+        super().__init__(coordinator, energie, "jaarschatting", "jaarschatting")
+
+    @property
+    def native_value(self) -> float | None:
+        return _getal(self._deel("jaar").get("kost_eur"))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        j = self._deel("jaar")
+        return {
+            "voorschot_jaar": _getal(j.get("voorschot_eur")), "saldo": _getal(j.get("saldo_eur")),
+            "aangeraden_voorschot": _getal(j.get("aangeraden_voorschot_eur")),
+            "van": j.get("van"), "tot": j.get("tot"), "contract": self._a().get("contract"),
+            "reden": self._reden("jaar"), "waarschuwingen": j.get("waarschuwingen", []),
+        }
+
+
+class SefVoorschotSaldo(_SefVoorschot):
+    """Jaarinschatting min 12 × je voorschot: positief = bijbetalen op de
+    afrekening, negatief = terugkrijgen. Onbekend zonder voorschot in SEF."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator, energie: str) -> None:
+        super().__init__(coordinator, energie, "voorschot saldo", "voorschot_saldo")
+
+    @property
+    def native_value(self) -> float | None:
+        return _getal(self._deel("jaar").get("saldo_eur"))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        j = self._deel("jaar")
+        reden = self._reden("jaar")
+        if reden is None and self._a() and self._a().get("voorschot_eur_maand") is None:
+            reden = "Geef je maandvoorschot in op de website (Mijn voorschot)."
+        return {"voorschot_maand": _getal(self._a().get("voorschot_eur_maand")),
+                "aangeraden_voorschot": _getal(j.get("aangeraden_voorschot_eur")), "reden": reden}
