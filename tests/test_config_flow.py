@@ -50,7 +50,10 @@ ANTWOORDEN = {
                           "waarschuwingen": [], "voorschot_eur": "93.00", "verschil_eur": "-4.60"},
          "jaar": {"van": "2025-10-01", "tot": "2026-10-01", "kost_eur": "1234.56", "reden": None, "waarschuwingen": [],
                   "voorschot_eur": "1116.00", "saldo_eur": "118.56", "aangeraden_voorschot_eur": "103",
-                  "normaal": None}},
+                  "normaal": None},
+         "recent": {"van": "2026-10-03", "tot": "2026-10-17", "kost_eur": "42.00", "reden": None, "waarschuwingen": []},
+         "recent_vorig_jaar": {"van": "2025-10-04", "tot": "2025-10-18", "kost_eur": "60.00", "reden": None,
+                               "waarschuwingen": []}},
         {"aansluiting": 2, "energie": "gas", "contract": "ENGIE Easy", "voorschot_eur_maand": "100.00", "reden": None,
          "maand": None, "vorige_maand": {"van": "2026-09-01", "tot": "2026-10-01", "kost_eur": "24.56", "reden": None,
                                          "waarschuwingen": [], "voorschot_eur": "100.00", "verschil_eur": "-75.44"},
@@ -104,6 +107,8 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
     assert hass.states.get("sensor.sef_besparing_gas") is None
     maand = hass.states.get("sensor.sef_kost_deze_maand_elektriciteit")
     assert (maand.state, maand.attributes["voorschot_tot_nu"], maand.attributes["verschil"]) == ("51.2", 48.0, 3.2)
+    assert (maand.attributes["laatste_14_dagen_kost"], maand.attributes["zelfde_dagen_vorig_jaar_kost"]) == (42.0, 60.0)
+    assert hass.states.get("sensor.sef_kost_deze_maand_gas").attributes["laatste_14_dagen_kost"] is None
     jaar = hass.states.get("sensor.sef_jaarschatting_elektriciteit")
     assert (jaar.state, jaar.attributes["aangeraden_voorschot"]) == ("1234.56", 103.0)
     assert hass.states.get("sensor.sef_voorschot_saldo_elektriciteit").state == "118.56"

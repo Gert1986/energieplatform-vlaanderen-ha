@@ -48,7 +48,9 @@ Doet vier dingen:
    - `sensor.sef_kost_deze_maand_elektriciteit` (EUR): wat je verbruik deze maand al kostte, tot de laatste
      volledige meetdag. Attributen: `voorschot_maand`, `voorschot_tot_nu` (je voorschot voor dezelfde
      dagen, naar rato), `verschil` (positief = meer dan je voorschot), `vorige_maand_kost` en
-     `vorige_maand_verschil`.
+     `vorige_maand_verschil`. Sinds 0.8.0 ook `laatste_14_dagen_kost` en
+     `zelfde_dagen_vorig_jaar_kost` (dezelfde weekdagen 52 weken eerder, zelfde prijzen): zo zie je een
+     recente besparing (batterij, toestel uit) al vóór de jaarinschatting ze oppikt.
    - `sensor.sef_jaarschatting_elektriciteit` (EUR): de kost van de laatste 12 volle maanden met je huidige
      contract. Attributen: `voorschot_jaar` (12 × je voorschot), `saldo` en `aangeraden_voorschot`. Onbekend
      met minder dan 12 volle maanden meetdata; `reden` zegt waarom.

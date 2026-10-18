@@ -273,6 +273,9 @@ class SefKostMaand(_SefVoorschot):
             "vorige_maand_kost": _getal(v.get("kost_eur")), "vorige_maand_verschil": _getal(v.get("verschil_eur")),
             "contract": self._a().get("contract"), "reden": self._reden("maand"),
             "waarschuwingen": m.get("waarschuwingen", []),
+            # Sinds 0.8.0: de laatste 14 meetdagen en dezelfde weekdagen 52 weken eerder, zelfde prijzen.
+            "laatste_14_dagen_kost": _getal(self._deel("recent").get("kost_eur")),
+            "zelfde_dagen_vorig_jaar_kost": _getal(self._deel("recent_vorig_jaar").get("kost_eur")),
         }
 
 
