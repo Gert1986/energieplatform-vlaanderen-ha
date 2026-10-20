@@ -151,6 +151,9 @@ async def _venster(client: SefClient, energie: str, stap: timedelta, grens) -> t
     grens (`grens`: kwartier- of uurgrens) vóór nu; None als er niets te doen is."""
     aansluitingen = [a for a in (await client.vraag("GET", "/mij/aansluitingen"))["aansluitingen"]
                      if a["energie"] == energie]
+    if not aansluitingen:  # een aansluiting ontstaat pas bij de eerste Fluvius-export
+        raise SefFout(0, "GEEN_AANSLUITING", f"Geen {energie}aansluiting in SEF. Laad eerst een Fluvius-export "
+                      f"van je {energie}meter op, of laat het {energie}telwerk leeg in de instellingen.")
     if len(aansluitingen) != 1:
         raise SefFout(0, "AANSLUITING", f"{len(aansluitingen)} {energie}aansluitingen in SEF, verwacht één.")
     aansluiting = aansluitingen[0]

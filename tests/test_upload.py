@@ -116,6 +116,17 @@ def test_gasupload_stuurt_enkel_volledige_uren_in_m3(statistiek, monkeypatch):
     assert body == {"meter": "5c2fafabcdef", "metingen": [{"tijdstip": "2026-10-06T07:00:00+00:00", "m3": "0.120000"}]}
 
 
+def test_gastelwerk_zonder_gasaansluiting_in_sef_zegt_wat_te_doen(statistiek):
+    """Een gastelwerk in HA zonder Fluvius-gasexport in SEF: een melding met de oplossing, geen '0 … verwacht één'."""
+    class ZonderGas(NepClient):
+        async def vraag(self, methode, pad, json=None):
+            return {"aansluitingen": [{"id": 7, "energie": "elektriciteit", "laatste_meting": self.laatste}]}
+
+    with pytest.raises(sef.SefFout) as fout:
+        asyncio.run(sef._upload_gas(None, ZonderGas("2026-10-06T07:45:00+00:00"), {**CONF, "gas": "sensor.gas"}))
+    assert fout.value.code == "GEEN_AANSLUITING" and "Fluvius-export" in fout.value.titel
+
+
 def _recorder(monkeypatch, per_entiteit: dict):
     """Nep-recorder die per entiteit de gegeven rijen teruggeeft (ontbrekend = geen statistiek)."""
     class Recorder:
