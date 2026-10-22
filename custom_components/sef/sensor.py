@@ -8,7 +8,8 @@ Met `gas` ook `/mij/gasprijs`: EUR/m³ incl. btw (ADR-0064). Waakhond uit
 `/mij/waakhond`: wat het goedkoopste contract uit je laatste vergelijking
 minder kost dan je huidige, en het aantal dagen tot je contract eindigt.
 Voorschot uit `/mij/voorschot` (ADR-0078): de kost van deze maand en de
-jaarinschatting tegenover je maandvoorschot, en het saldo op de afrekening.
+jaarinschatting tegenover je maandvoorschot, en het saldo op de afrekening;
+sinds 0.9.0 ook de kost sinds je laatste afrekening (ADR-0085).
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -68,7 +69,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     gas_voorschot = any(a.get("energie") == "gas" for a in (voorschot.data or {}).get("aansluitingen", []))
     for energie in ("elektriciteit", "gas") if "gas" in conf or gas_voorschot else ("elektriciteit",):
         sensoren += [SefKostMaand(voorschot, energie), SefJaarschatting(voorschot, energie),
-                     SefVoorschotSaldo(voorschot, energie)]
+                     SefVoorschotSaldo(voorschot, energie), SefKostSindsAfrekening(voorschot, energie)]
     async_add_entities(sensoren)
 
 
@@ -277,6 +278,26 @@ class SefKostMaand(_SefVoorschot):
             "laatste_14_dagen_kost": _getal(self._deel("recent").get("kost_eur")),
             "zelfde_dagen_vorig_jaar_kost": _getal(self._deel("recent_vorig_jaar").get("kost_eur")),
         }
+
+
+class SefKostSindsAfrekening(_SefVoorschot):
+    """Wat je verbruik kostte sinds je laatste afrekening (datum ingegeven op
+    de website, Mijn voorschot), tot de laatste volledige meetdag, met het
+    voorschot voor die periode (naar rato) en het verschil (positief = meer
+    dan je voorschot). Elektriciteit en gas samen: een template in HA."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator, energie: str) -> None:
+        super().__init__(coordinator, energie, "kost sinds afrekening", "kost_sinds_afrekening")
+
+    @property
+    def native_value(self) -> float | None:
+        return _getal(self._deel("sinds_afrekening").get("kost_eur"))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        s = self._deel("sinds_afrekening")
+        return {"van": s.get("van"), "tot": s.get("tot"), "voorschot": _getal(s.get("voorschot_eur")),
+                "verschil": _getal(s.get("verschil_eur")), "reden": self._reden("sinds_afrekening")}
 
 
 class SefJaarschatting(_SefVoorschot):

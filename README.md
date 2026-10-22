@@ -56,6 +56,12 @@ Doet vier dingen:
      met minder dan 12 volle maanden meetdata; `reden` zegt waarom.
    - `sensor.sef_voorschot_saldo_elektriciteit` (EUR): jaarschatting min 12 × je voorschot; positief =
      bijbetalen op de afrekening, negatief = terugkrijgen.
+   - `sensor.sef_kost_sinds_afrekening_elektriciteit` (EUR, sinds 0.9.0): wat je verbruik kostte sinds je
+     laatste afrekening, tot de laatste volledige meetdag. Geef de datum in op de website (*Mijn voorschot*,
+     begin van de lopende afrekeningsperiode). Attributen: `van`, `tot` (exclusief), `voorschot` (je voorschot
+     voor die periode, naar rato per maand), `verschil` (positief = meer dan je voorschot) en `reden`.
+     Elektriciteit en gas samen: een template-sensor, bv.
+     `{{ states('sensor.sef_kost_sinds_afrekening_elektriciteit') | float(0) + states('sensor.sef_kost_sinds_afrekening_gas') | float(0) }}`.
    - Met gas (ingesteld, of een gasaansluiting in SEF) ook `…_gas`. Sinds 0.7.0 heeft
      `sensor.sef_jaarschatting_gas` ook de kost bij normaal weer: `normaal_kost`, `normaal_saldo`,
      `graaddagen` (het gemeten jaar), `graaddagen_normaal` (gemiddelde van dezelfde maanden in de 10 vorige

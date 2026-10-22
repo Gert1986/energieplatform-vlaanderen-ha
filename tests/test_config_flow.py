@@ -53,7 +53,9 @@ ANTWOORDEN = {
                   "normaal": None},
          "recent": {"van": "2026-10-03", "tot": "2026-10-17", "kost_eur": "42.00", "reden": None, "waarschuwingen": []},
          "recent_vorig_jaar": {"van": "2025-10-04", "tot": "2025-10-18", "kost_eur": "60.00", "reden": None,
-                               "waarschuwingen": []}},
+                               "waarschuwingen": []},
+         "sinds_afrekening": {"van": "2026-05-01", "tot": "2026-10-17", "kost_eur": "512.30", "reden": None,
+                              "waarschuwingen": [], "voorschot_eur": "513.00", "verschil_eur": "-0.70"}},
         {"aansluiting": 2, "energie": "gas", "contract": "ENGIE Easy", "voorschot_eur_maand": "100.00", "reden": None,
          "maand": None, "vorige_maand": {"van": "2026-09-01", "tot": "2026-10-01", "kost_eur": "24.56", "reden": None,
                                          "waarschuwingen": [], "voorschot_eur": "100.00", "verschil_eur": "-75.44"},
@@ -62,7 +64,10 @@ ANTWOORDEN = {
                   "normaal": {"kost_eur": "1350.10", "saldo_eur": "150.10", "correctie_eur": "108.48",
                               "extra_kwh": "986.2", "graaddagen": "2200.5", "graaddagen_normaal": "2420.0",
                               "station": 6434, "referentie_van": 2015, "referentie_tot": 2025, "referentie_jaren": 9,
-                              "reden": None}}}]},
+                              "reden": None}},
+         "sinds_afrekening": {"van": None, "tot": None, "kost_eur": None, "voorschot_eur": None, "verschil_eur": None,
+                              "reden": "geef de datum van uw laatste afrekening in bij Mijn voorschot.",
+                              "waarschuwingen": []}}]},
 }
 
 
@@ -118,6 +123,11 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
         ("1241.62", 1350.1, "2015-2025")
     assert gasjaar.attributes["referentie_jaren"] == 9
     assert hass.states.get("sensor.sef_voorschot_saldo_gas").attributes["normaal_saldo"] == 150.1
+    sinds = hass.states.get("sensor.sef_kost_sinds_afrekening_elektriciteit")  # sinds 0.9.0
+    assert (sinds.state, sinds.attributes["van"], sinds.attributes["tot"]) == ("512.3", "2026-05-01", "2026-10-17")
+    assert (sinds.attributes["voorschot"], sinds.attributes["verschil"], sinds.attributes["reden"]) == (513.0, -0.7, None)
+    gas_sinds = hass.states.get("sensor.sef_kost_sinds_afrekening_gas")
+    assert gas_sinds.state == "unknown" and "afrekening" in gas_sinds.attributes["reden"]
     assert jaar.attributes["normaal_kost"] is None  # elektriciteit: geen weercorrectie
     assert hass.states.get("sensor.sef_afnameprijs").attributes["kwartieren"] == [
         {"start": "2026-10-14T00:00:00+02:00", "prijs": 0.31}]
