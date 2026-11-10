@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "sef"))
-from p1 import BLOK, KWARTIER, in_stukken, kwartiergrens, kwartierrijen  # noqa: E402
+from p1 import BLOK, KWARTIER, batterijrijen, in_stukken, kwartiergrens, kwartierrijen  # noqa: E402
 
 T0 = datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc)
 
@@ -101,3 +101,20 @@ def test_gas_negatief_of_onmogelijk_stopt():
         gasrijen({T0: -0.1}, vanaf=T0, tot=T0 + UUR)
     with pytest.raises(ValueError, match="onmogelijk"):
         gasrijen({T0 + i * BLOK: 1.0 for i in range(12)}, vanaf=T0, tot=T0 + UUR)
+
+
+def test_batterij_laden_en_ontladen_per_kwartier():
+    blokken = _blokken({"laden": [0.1, 0.1, 0.1, 0, 0, 0], "ontladen": [0, 0, 0, 0.05, 0.05, 0]})
+    assert batterijrijen(blokken, vanaf=T0, tot=T0 + 2 * KWARTIER) == [
+        {"tijdstip": "2026-10-06T08:00:00+00:00", "richting": "batterij_laden", "kwh": "0.300000"},
+        {"tijdstip": "2026-10-06T08:00:00+00:00", "richting": "batterij_ontladen", "kwh": "0.000000"},
+        {"tijdstip": "2026-10-06T08:15:00+00:00", "richting": "batterij_laden", "kwh": "0.000000"},
+        {"tijdstip": "2026-10-06T08:15:00+00:00", "richting": "batterij_ontladen", "kwh": "0.100000"},
+    ]
+
+
+def test_batterij_wh_als_kwh_of_teruggezet_telwerk_stopt():
+    with pytest.raises(ValueError, match="Wh"):  # 1,2 kWh per kwartier gemeld als 1200 "kWh"
+        batterijrijen(_blokken({"laden": [400, 400, 400], "ontladen": [0, 0, 0]}), vanaf=T0, tot=T0 + KWARTIER)
+    with pytest.raises(ValueError, match="teruggezet"):
+        batterijrijen(_blokken({"laden": [0.1, -812.4, 0], "ontladen": [0, 0, 0]}), vanaf=T0, tot=T0 + KWARTIER)

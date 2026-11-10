@@ -94,6 +94,9 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
     assert r["errors"] == {"meter": "meter_nodig"}
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"meter": "5c2f-ab"})
     assert r["errors"] == {"meter": "meter_ongeldig"}
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"meter": "abcd1234",
+                                                                      "batterij_laden": "sensor.batterij_in"})
+    assert r["errors"] == {"base": "batterij_paar"}  # ADR-0066: beide batterijtelwerken of geen
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
     assert r["type"] is FlowResultType.CREATE_ENTRY
     assert {k: r["data"][k] for k in ("url", "sleutel", "tarief_1", "enkelvoudig")} == \

@@ -4,7 +4,8 @@ __init__.py
 
 SEF in Home Assistant (ADR-0054, ADR-0064): prijssensoren uit `/mij/prijs` en
 `/mij/gasprijs`, waakhondsensoren uit `/mij/waakhond`, elk kwartier de
-P1-kwartierwaarden en elk uur het gasverbruik naar SEF. Instellen via de UI
+P1-kwartierwaarden en het laden/ontladen van de thuisbatterij (ADR-0066),
+en elk uur het gasverbruik naar SEF. Instellen via de UI
 (`config_flow.py`); een `sef:`-blok in de YAML wordt daarin ingelezen.
 
 :copyright: (c) 2026 Gert Botte
@@ -30,7 +31,8 @@ from homeassistant.helpers.event import async_call_later, async_track_time_chang
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
-from .p1 import BLOK, KANALEN, KWARTIER, UUR, gasrijen, in_stukken, kwartiergrens, kwartierrijen, uurgrens
+from .p1 import (BLOK, KANALEN, KWARTIER, UUR, batterijrijen, gasrijen, in_stukken, kwartiergrens, kwartierrijen,
+                 uurgrens)
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "sef"
@@ -51,6 +53,9 @@ CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({
     vol.Optional("tarief_1", default="dag"): vol.In(["dag", "nacht"]),
     vol.Optional("enkelvoudig", default=False): cv.boolean,
     vol.Optional("gas"): cv.entity_id,           # gastelwerk (m³, total_increasing): upload + gasprijssensor
+    # Thuisbatterij (ADR-0066): AC-telwerken van geladen en ontladen energie (kWh of Wh, total_increasing); beide of geen.
+    vol.Inclusive("batterij_laden", "batterij"): cv.entity_id,
+    vol.Inclusive("batterij_ontladen", "batterij"): cv.entity_id,
 })}, extra=vol.ALLOW_EXTRA)
 
 
@@ -93,7 +98,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     telwerken = {k: conf[k] for k in KANALEN if k in conf}
-    if "meter" not in conf or not (telwerken or "gas" in conf):
+    batterij = "batterij_laden" in conf and "batterij_ontladen" in conf
+    if "meter" not in conf or not (telwerken or "gas" in conf or batterij):
         _LOGGER.info("SEF: geen meter of telwerken ingesteld, enkel prijs- en waakhondsensoren")
         return True
     if telwerken:
@@ -106,6 +112,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         uur = _taak(hass, "sef_p1_gas", "P1-gasupload", lambda: _upload_gas(hass, client, conf))
         entry.async_on_unload(async_track_time_change(hass, uur, minute=7, second=0))
         entry.async_on_unload(async_call_later(hass, 90, uur))
+    if batterij:
+        # Eigen taak en aanvragen: zonder batterijtoestemming in SEF (403) gaan de netkwartieren gewoon door.
+        batterijtaak = _taak(hass, "sef_batterij", "batterij-upload", lambda: _upload_batterij(hass, client, conf))
+        entry.async_on_unload(async_track_time_change(hass, batterijtaak, minute=[4, 19, 34, 49], second=0))
+        entry.async_on_unload(async_call_later(hass, 120, batterijtaak))
     return True
 
 
@@ -146,9 +157,8 @@ def _taak(hass: HomeAssistant, melding: str, naam: str, upload):
     return taak
 
 
-async def _venster(client: SefClient, energie: str, stap: timedelta, grens) -> tuple[dict, datetime, datetime] | None:
-    """(aansluiting, vanaf, tot): van na de laatste meting in SEF tot de laatste
-    grens (`grens`: kwartier- of uurgrens) vóór nu; None als er niets te doen is."""
+async def _aansluiting(client: SefClient, energie: str) -> dict:
+    """De enige aansluiting van `energie` in SEF, met Fluvius-data; anders SefFout met wat te doen."""
     aansluitingen = [a for a in (await client.vraag("GET", "/mij/aansluitingen"))["aansluitingen"]
                      if a["energie"] == energie]
     if not aansluitingen:  # een aansluiting ontstaat pas bij de eerste Fluvius-export
@@ -156,10 +166,16 @@ async def _venster(client: SefClient, energie: str, stap: timedelta, grens) -> t
                       f"van je {energie}meter op, of laat het {energie}telwerk leeg in de instellingen.")
     if len(aansluitingen) != 1:
         raise SefFout(0, "AANSLUITING", f"{len(aansluitingen)} {energie}aansluitingen in SEF, verwacht één.")
-    aansluiting = aansluitingen[0]
-    nu = dt_util.utcnow()
-    if not aansluiting["laatste_meting"]:
+    if not aansluitingen[0]["laatste_meting"]:
         raise SefFout(0, "GEEN_FLUVIUS_DATA", "Laad eerst een Fluvius-export op in SEF.")
+    return aansluitingen[0]
+
+
+async def _venster(client: SefClient, energie: str, stap: timedelta, grens) -> tuple[dict, datetime, datetime] | None:
+    """(aansluiting, vanaf, tot): van na de laatste meting in SEF tot de laatste
+    grens (`grens`: kwartier- of uurgrens) vóór nu; None als er niets te doen is."""
+    aansluiting = await _aansluiting(client, energie)
+    nu = dt_util.utcnow()
     vanaf = dt_util.parse_datetime(aansluiting["laatste_meting"]) + stap
     if vanaf < nu - timedelta(days=MAX_DAGEN_TERUG):
         raise SefFout(0, "GAT_NA_LAATSTE_METING",
@@ -169,14 +185,16 @@ async def _venster(client: SefClient, energie: str, stap: timedelta, grens) -> t
     return None if vanaf >= tot else (aansluiting, vanaf, tot)
 
 
-async def _blokken(hass: HomeAssistant, entiteiten: set[str], vanaf: datetime, tot: datetime) -> dict:
+async def _blokken(hass: HomeAssistant, entiteiten: set[str], vanaf: datetime, tot: datetime,
+                   eenheden: dict | None = None) -> dict:
     """Per entiteit het verbruik per 5-minutenblok (begin -> `change`).
     Een telwerk zonder statistiek telt niet stil als 0: ValueError (melding in
     HA) als een ander telwerk in hetzelfde venster wel blokken heeft, of als er
     over een uur of meer geen enkel blok is. Een korter leeg venster is gewoon
-    de recorder die nog niet bij is."""
+    de recorder die nog niet bij is. `eenheden`: omrekening door de recorder
+    (bv. `{"energy": "kWh"}` voor een telwerk in Wh)."""
     ruw = await get_instance(hass).async_add_executor_job(
-        statistics_during_period, hass, vanaf, tot, entiteiten, "5minute", None, {"change"})
+        statistics_during_period, hass, vanaf, tot, entiteiten, "5minute", eenheden, {"change"})
     blokken = {e: {dt_util.utc_from_timestamp(r["start"]): r["change"] for r in ruw.get(e, [])
                    if r.get("change") is not None} for e in entiteiten}
     leeg = sorted(e for e, b in blokken.items() if not b)
@@ -226,3 +244,35 @@ async def _upload(hass: HomeAssistant, client: SefClient, conf: dict, telwerken:
         uitslag = await client.vraag("POST", f"/mij/aansluitingen/{aansluiting['id']}/meetwaarden",
                                      json={"meter": conf["meter"], "metingen": stuk})
         _LOGGER.debug("SEF P1-upload: %s", {k: uitslag.get(k) for k in ("status", "rijen", "nieuw", "fluvius_behouden")})
+
+
+async def _upload_batterij(hass: HomeAssistant, client: SefClient, conf: dict) -> None:
+    """Laden en ontladen van de thuisbatterij per kwartier (ADR-0066), in eigen
+    aanvragen. Gaat verder na het laatste batterijkwartier in SEF; zonder
+    (eerste keer, of na wissen) vanaf het eerste kwartier dat de statistiek
+    volledig heeft, hoogstens 10 dagen terug: vóór het telwerk bestond, is er
+    niets om als 0 te sturen. Een gat (HA lag langer dan 10 dagen stil) blijft
+    een gat; SEF meldt het bij de berekening."""
+    aansluiting = await _aansluiting(client, "elektriciteit")
+    nu = dt_util.utcnow()
+    # Marge van minstens een kwartier: SEF toetst de 10 dagen met zijn eigen, latere klok.
+    oudste = kwartiergrens(nu - timedelta(days=MAX_DAGEN_TERUG)) + 2 * KWARTIER
+    laatste = aansluiting.get("laatste_batterijmeting")
+    vanaf = max(oudste, dt_util.parse_datetime(laatste) + KWARTIER) if laatste else oudste
+    tot = kwartiergrens(nu)
+    if vanaf >= tot:
+        return
+    per_entiteit = await _blokken(hass, {conf["batterij_laden"], conf["batterij_ontladen"]}, vanaf, tot,
+                                  eenheden={"energy": "kWh"})
+    blokken = {"laden": per_entiteit[conf["batterij_laden"]], "ontladen": per_entiteit[conf["batterij_ontladen"]]}
+    tijden = [t for b in blokken.values() for t in b]
+    if not tijden:
+        return
+    if not laatste:
+        vanaf = max(vanaf, kwartiergrens(min(tijden) + 2 * BLOK))  # eerste volledige kwartier
+    tot = min(tot, kwartiergrens(max(tijden) + BLOK))
+    rijen = batterijrijen(blokken, vanaf=vanaf, tot=tot)
+    for stuk in in_stukken(rijen):
+        uitslag = await client.vraag("POST", f"/mij/aansluitingen/{aansluiting['id']}/meetwaarden",
+                                     json={"meter": conf["meter"], "metingen": stuk})
+        _LOGGER.debug("SEF batterij-upload: %s", {k: uitslag.get(k) for k in ("status", "batterij")})

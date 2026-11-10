@@ -11,7 +11,7 @@
       },
       "meter": {
         "title": "SEF: P1-meter (optioneel)",
-        "description": "Laat alles leeg voor enkel de prijs- en waakhondsensoren. Het meter-ID is het serienummer van je P1-meter (enkel letters en cijfers); SEF koppelt de eerste upload eraan en weigert daarna een ander ID.",
+        "description": "Laat alles leeg voor enkel de prijs- en waakhondsensoren. Het meter-ID is het serienummer van je P1-meter (enkel letters en cijfers); SEF koppelt de eerste upload eraan en weigert daarna een ander ID. Met een thuisbatterij: de twee telwerken van geladen en ontladen energie; zet de batterijstroom ook aan op Mijn Energieplatform → Instellingen.",
         "data": {
           "meter": "Meter-ID",
           "afname_1": "Afname tarief 1 (kWh)",
@@ -20,7 +20,9 @@
           "injectie_2": "Injectie tarief 2 (kWh)",
           "tarief_1": "Tarief 1 is",
           "enkelvoudig": "Enkelvoudige meter",
-          "gas": "Gastelwerk (m³)"
+          "gas": "Gastelwerk (m³)",
+          "batterij_laden": "Batterij: geladen energie (kWh)",
+          "batterij_ontladen": "Batterij: ontladen energie (kWh)"
         }
       }
     },
@@ -29,7 +31,8 @@
       "niet_bereikbaar": "SEF is niet bereikbaar op dit adres.",
       "onverwacht": "Onverwacht antwoord van SEF; zie het logboek.",
       "meter_ongeldig": "Enkel letters en cijfers, 4 tot 64 tekens.",
-      "meter_nodig": "Met telwerken is een meter-ID nodig."
+      "meter_nodig": "Met telwerken is een meter-ID nodig.",
+      "batterij_paar": "Geef beide batterijtelwerken op (geladen en ontladen), of geen van beide."
     },
     "abort": {
       "already_configured": "SEF is al ingesteld."

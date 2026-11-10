@@ -11,7 +11,7 @@
       },
       "meter": {
         "title": "SEF: P1 meter (optional)",
-        "description": "Leave empty for the price and watchdog sensors only. The meter ID is the serial number of your P1 meter (letters and digits); SEF binds the first upload to it and rejects a different ID afterwards.",
+        "description": "Leave empty for the price and watchdog sensors only. The meter ID is the serial number of your P1 meter (letters and digits); SEF binds the first upload to it and rejects a different ID afterwards. With a home battery: the two counters of energy charged and discharged; also enable the battery stream in Mijn Energieplatform → Instellingen.",
         "data": {
           "meter": "Meter ID",
           "afname_1": "Import tariff 1 (kWh)",
@@ -20,7 +20,9 @@
           "injectie_2": "Export tariff 2 (kWh)",
           "tarief_1": "Tariff 1 is",
           "enkelvoudig": "Single-rate meter",
-          "gas": "Gas meter (m³)"
+          "gas": "Gas meter (m³)",
+          "batterij_laden": "Battery: energy charged (kWh)",
+          "batterij_ontladen": "Battery: energy discharged (kWh)"
         }
       }
     },
@@ -29,7 +31,8 @@
       "niet_bereikbaar": "SEF cannot be reached at this address.",
       "onverwacht": "Unexpected answer from SEF; see the log.",
       "meter_ongeldig": "Letters and digits only, 4 to 64 characters.",
-      "meter_nodig": "A meter ID is required with meters."
+      "meter_nodig": "A meter ID is required with meters.",
+      "batterij_paar": "Enter both battery counters (charged and discharged), or neither."
     },
     "abort": {
       "already_configured": "SEF is already configured."

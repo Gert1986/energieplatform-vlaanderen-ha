@@ -3,8 +3,8 @@ p1.py
 ~~~~~
 
 Van de 5-minutenstatistieken van de P1-telwerken in Home Assistant naar de
-kwartierrijen (elektriciteit, ADR-0054) en uurrijen in m³ (gas, ADR-0064) die
-SEF verwacht. Puur: geen Home Assistant nodig.
+kwartierrijen (elektriciteit, ADR-0054), uurrijen in m³ (gas, ADR-0064) en
+batterijkwartieren (laden en ontladen, ADR-0066) die SEF verwacht. Puur: geen Home Assistant nodig.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -20,6 +20,7 @@ BLOK = timedelta(minutes=5)
 MAX_RIJEN = 1000          # per aanvraag aan SEF
 MAX_KWH = Decimal("25")   # per kwartier, zoals SEF
 MAX_M3 = Decimal("10")    # per uur, zoals SEF (een G6-gasmeter)
+MAX_BATTERIJ_KWH = Decimal("10")  # per kwartier, zoals SEF: vangt een teller die Wh als kWh meldt
 KANALEN = ("afname_1", "afname_2", "injectie_1", "injectie_2")
 
 
@@ -99,10 +100,35 @@ def kwartierrijen(blokken: dict[str, dict[datetime, float]], *, vanaf: datetime,
     return rijen
 
 
+def batterijrijen(blokken: dict[str, dict[datetime, float]], *, vanaf: datetime, tot: datetime) -> list[dict]:
+    """Rijen `{tijdstip, richting, kwh}` voor elk kwartier van [vanaf, tot):
+    `batterij_laden` en `batterij_ontladen` uit `blokken["laden"]` en
+    `blokken["ontladen"]` (begin -> kWh per 5-minutenblok). SEF wil per
+    kwartier beide. Een ontbrekend blok telt als 0 (zie `kwartierrijen`);
+    een negatief blok of meer dan `MAX_BATTERIJ_KWH` in een kwartier stopt
+    alles (ValueError): dan meldt de batterij Wh in plaats van kWh, of werd
+    het telwerk teruggezet."""
+    rijen: list[dict] = []
+    q = kwartiergrens(vanaf)
+    while q + KWARTIER <= tot:
+        for richting in ("laden", "ontladen"):
+            waarden = [Decimal(repr(blokken.get(richting, {}).get(q + i * BLOK, 0.0))) for i in range(3)]
+            if any(w < 0 for w in waarden):
+                raise ValueError(f"batterij {richting}: negatieve waarde rond {q.isoformat()} "
+                                 "(telwerk vervangen of teruggezet?).")
+            kwh = sum(waarden, Decimal("0")).quantize(Decimal("0.000001"))
+            if kwh > MAX_BATTERIJ_KWH:
+                raise ValueError(f"batterij {richting}: {kwh} kWh in het kwartier van {q.isoformat()} is onmogelijk. "
+                                 "Meldt het telwerk Wh in plaats van kWh?")
+            rijen.append({"tijdstip": q.isoformat(), "richting": f"batterij_{richting}", "kwh": format(kwh, "f")})
+        q += KWARTIER
+    return rijen
+
+
 def in_stukken(rijen: list[dict], grootte: int = MAX_RIJEN) -> list[list[dict]]:
     """Opeenvolgende stukken van hoogstens `grootte` rijen, oudste eerst: SEF
     aanvaardt enkel wat zonder gat op zijn laatste meting aansluit. Een
-    kwartier (afname + injectie) wordt nooit gesplitst."""
+    kwartier (afname + injectie, of laden + ontladen) wordt nooit gesplitst."""
     if grootte % 2:
         raise ValueError("grootte moet even zijn: twee rijen per kwartier")
     return [rijen[i:i + grootte] for i in range(0, len(rijen), grootte)]

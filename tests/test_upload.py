@@ -160,3 +160,76 @@ def test_kort_leeg_venster_wacht_stil_op_de_recorder(statistiek, monkeypatch):
     client = NepClient("2026-10-06T08:15:00+00:00")  # venster 08:30-08:45: recorder nog niet bij
     asyncio.run(sef._upload(None, client, CONF, TELWERKEN))
     assert client.posts == []
+
+
+BATTERIJ = {**CONF, "batterij_laden": "sensor.b_in", "batterij_ontladen": "sensor.b_uit"}
+
+
+class NepBatterij(NepClient):
+    """SEF met een elektriciteitsaansluiting en (optioneel) een laatste batterijkwartier."""
+
+    def __init__(self, laatste_batterij):
+        super().__init__("2026-10-06T07:45:00+00:00")
+        self.laatste_batterij = laatste_batterij
+
+    async def vraag(self, methode, pad, json=None):
+        if methode == "GET":
+            return {"aansluitingen": [{"id": 7, "energie": "elektriciteit", "laatste_meting": self.laatste,
+                                       "laatste_batterijmeting": self.laatste_batterij}]}
+        return await super().vraag(methode, pad, json)
+
+
+def _batterijrecorder(monkeypatch, begin, aantal):
+    """Blokken van beide batterijtelwerken vanaf `begin`; onthoudt de vraag."""
+    gevraagd = {}
+
+    class Recorder:
+        async def async_add_executor_job(self, functie, hass, start, eind, ids, periode, eenheden, soorten):
+            gevraagd.update(start=start, eind=eind, ids=ids, eenheden=eenheden)
+            rijen = [{"start": (begin + timedelta(minutes=5 * i)).timestamp(), "change": 0.1} for i in range(aantal)]
+            return {"sensor.b_in": rijen, "sensor.b_uit": [{**r, "change": 0.0} for r in rijen]}
+
+    monkeypatch.setattr(sef, "get_instance", lambda hass: Recorder())
+    return gevraagd
+
+
+def test_batterij_gaat_verder_na_sef_in_kwh_en_eigen_aanvraag(statistiek, monkeypatch):
+    gevraagd = _batterijrecorder(monkeypatch, datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc), 9)
+    client = NepBatterij("2026-10-06T07:45:00+00:00")
+    asyncio.run(sef._upload_batterij(None, client, BATTERIJ))
+    assert gevraagd["start"] == datetime(2026, 10, 6, 8, 0, tzinfo=timezone.utc)
+    assert gevraagd["eenheden"] == {"energy": "kWh"}  # een telwerk in Wh rekent de recorder om
+    ((pad, body),) = client.posts
+    assert pad == "/mij/aansluitingen/7/meetwaarden"
+    assert all("register" not in m for m in body["metingen"])  # enkel batterijrijen, de netkwartieren apart
+    assert [(m["tijdstip"][11:16], m["richting"], m["kwh"]) for m in body["metingen"]] == [
+        ("08:00", "batterij_laden", "0.300000"), ("08:00", "batterij_ontladen", "0.000000"),
+        ("08:15", "batterij_laden", "0.300000"), ("08:15", "batterij_ontladen", "0.000000"),
+        ("08:30", "batterij_laden", "0.300000"), ("08:30", "batterij_ontladen", "0.000000")]
+
+
+def test_batterij_eerste_keer_vanaf_het_eerste_volledige_kwartier_nooit_valse_nullen(statistiek, monkeypatch):
+    """Telwerk pas sinds 08:05: niets vóór 08:15 sturen (geen 0 voor de tijd zonder telwerk), en de
+    vraag gaat hoogstens 10 dagen terug met marge."""
+    gevraagd = _batterijrecorder(monkeypatch, datetime(2026, 10, 6, 8, 5, tzinfo=timezone.utc), 8)
+    client = NepBatterij(None)
+    asyncio.run(sef._upload_batterij(None, client, BATTERIJ))
+    assert gevraagd["start"] == datetime(2026, 9, 26, 9, 15, tzinfo=timezone.utc)  # 08:45 - 10 d + 2 kwartieren
+    ((_, body),) = client.posts
+    assert [m["tijdstip"][11:16] for m in body["metingen"]][::2] == ["08:15", "08:30"]
+
+
+def test_batterij_al_bij_of_geen_statistiek(statistiek, monkeypatch):
+    client = NepBatterij("2026-10-06T08:30:00+00:00")
+    asyncio.run(sef._upload_batterij(None, client, BATTERIJ))
+    assert client.posts == [] and statistiek == {}
+    _recorder(monkeypatch, {})
+    with pytest.raises(ValueError, match="sensor.b_"):  # een uur zonder blokken: melding, niet stil 0
+        asyncio.run(sef._upload_batterij(None, NepBatterij("2026-10-06T07:00:00+00:00"), BATTERIJ))
+
+
+def test_configuratieschema_batterij_beide_of_geen():
+    basis = {"sleutel": "sef_x", "meter": "5c2fafabcdef"}
+    assert sef.CONFIG_SCHEMA({"sef": {**basis, "batterij_laden": "sensor.a", "batterij_ontladen": "sensor.b"}})
+    with pytest.raises(Exception):
+        sef.CONFIG_SCHEMA({"sef": {**basis, "batterij_laden": "sensor.a"}})

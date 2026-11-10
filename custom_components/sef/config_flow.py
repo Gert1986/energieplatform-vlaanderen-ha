@@ -3,7 +3,8 @@ config_flow.py
 ~~~~~~~~~~~~~~
 
 Instellen via de UI: eerst adres en API-sleutel (nagekeken met
-`GET /mij/aansluitingen`), dan optioneel de P1-meter en zijn telwerken. Een
+`GET /mij/aansluitingen`), dan optioneel de P1-meter, zijn telwerken en die
+van de thuisbatterij. Een
 bestaande YAML-configuratie wordt bij het opstarten één keer ingelezen en
 blijft daarna de bron (een wijziging in de YAML werkt de ingave bij).
 
@@ -52,11 +53,14 @@ class SefConfigFlow(ConfigFlow, domain=DOMAIN):
         fouten: dict[str, str] = {}
         if user_input is not None:
             meter = user_input.get("meter", "").strip()
-            telwerken = [k for k in ("afname_1", "afname_2", "injectie_1", "injectie_2", "gas") if user_input.get(k)]
+            telwerken = [k for k in ("afname_1", "afname_2", "injectie_1", "injectie_2", "gas", "batterij_laden",
+                                     "batterij_ontladen") if user_input.get(k)]
             if meter and not METER_PATROON.fullmatch(meter):
                 fouten["meter"] = "meter_ongeldig"
             elif telwerken and not meter:
                 fouten["meter"] = "meter_nodig"
+            elif bool(user_input.get("batterij_laden")) != bool(user_input.get("batterij_ontladen")):
+                fouten["base"] = "batterij_paar"
             else:
                 data = {**self._data, **{k: v for k, v in user_input.items() if v not in ("", None)}}
                 if meter:
@@ -72,6 +76,8 @@ class SefConfigFlow(ConfigFlow, domain=DOMAIN):
                 selector.SelectSelectorConfig(options=["dag", "nacht"], translation_key="tarief_1")),
             vol.Optional("enkelvoudig", default=False): bool,
             vol.Optional("gas"): _TELWERK,
+            vol.Optional("batterij_laden"): _TELWERK,      # ADR-0066: beide of geen
+            vol.Optional("batterij_ontladen"): _TELWERK,
         }))
 
     async def async_step_import(self, import_data: dict) -> ConfigFlowResult:

@@ -23,6 +23,21 @@ Doet vier dingen:
    P1-telwerken, maakt er kwartieren van en stuurt alles sinds de laatste meting in SEF naar
    `POST /api/v1/mij/aansluitingen/{id}/meetwaarden`. Een gemist kwartier (herstart) vult hij vanzelf aan,
    tot 10 dagen terug.
+
+   **Thuisbatterij** (optioneel, sleutels `batterij_laden` en `batterij_ontladen`, sinds 0.10.0): vier
+   minuten na elk kwartier ook hoeveel je batterij in dat kwartier laadde en ontlaadde, in eigen aanvragen
+   (een batterijfout houdt de netkwartieren niet tegen). Daarmee meet SEF wat de batterij echt bespaart
+   (*Mijn investeringen*) in plaats van het te schatten tegen vorig jaar. Je hebt twee **telwerken** nodig
+   van de energie aan de wisselstroomkant (kWh of Wh, `state_class: total_increasing`), geen vermogen:
+   - Marstek Venus via Modbus: de sensoren *Total charging energy* en *Total discharging energy*
+     (de naam hangt af van de integratie; zoek in *Ontwikkelhulpmiddelen → Statistieken* op `charg`).
+   - Heeft je batterij enkel een vermogen (W): maak er per richting een telwerk van met de helper
+     *Integraal (Riemann-som)*, methode *links*, eenheid kWh, op een sensor die enkel laden (of enkel
+     ontladen) positief toont.
+
+   De eerste keer begint de upload bij het eerste volledige kwartier dat het telwerk in de statistiek heeft
+   (hoogstens 10 dagen terug), daarna na het laatste batterijkwartier in SEF. Meer dan 10 kWh in één kwartier
+   stopt de upload met een melding: dan meldt het telwerk meestal Wh terwijl het kWh zegt.
 3. **Gas** (optioneel, sleutel `gas`): elk uur (7 minuten na het uur) het gasverbruik in m³ van elk volledig
    uur sinds de laatste gasmeting in SEF; SEF rekent om naar kWh met de omrekening uit je eigen
    Fluvius-gasexport. Plus de sensor `sensor.sef_gasprijs`: wat één m³ gas nu kost met je huidige
@@ -85,6 +100,9 @@ Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.ph
 - **P1-stroom aan** op de website: *Mijn Energieplatform → Instellingen → P1-meter → P1-stroom toestaan*.
   Zonder die toestemming weigert SEF elke upload (`P1_GEEN_TOESTEMMING`, melding in Home Assistant). Daar
   stop je de stroom ook en wis je de P1-gegevens.
+- **Batterijstroom aan** (enkel met de batterijsleutels): op dezelfde plaats, *Batterijstroom toestaan*.
+  Een eigen toestemming; zonder weigert SEF de batterijkwartieren (`BATTERIJ_GEEN_TOESTEMMING`), de
+  netkwartieren lopen gewoon door.
 - **Sleutel**: maak een **Home Assistant-sleutel** op *Mijn Energieplatform → API-sleutels* (de sleutel
   verschijnt één keer). Of, door de beheerder in een eigen terminal:
   ```bash
@@ -127,6 +145,8 @@ in de YAML werkt die bij). In `secrets.yaml`: `sef_sleutel: sef_...`, en in `con
      tarief_1: dag                  # Belgische afspraak: 1.8.1/2.8.1 = dag. Omgekeerd? Zet nacht.
      # enkelvoudig: true            # enkel bij een enkelvoudige meter
      gas: sensor.gas_meter_gas     # optioneel: gastelwerk in m³ (HomeWizard: apparaat "Gas meter")
+     # batterij_laden: sensor.venus_total_charging_energy        # optioneel: beide of geen
+     # batterij_ontladen: sensor.venus_total_discharging_energy
    logger:
      logs:
        custom_components.sef: debug
@@ -184,7 +204,8 @@ kWh en de gebruikte omrekening (kWh per m³ en de maand waarvan ze komt).
 - **Gas in m³, SEF rekent om**: met de omrekening van de laatste volledige maand in je Fluvius-export
   (de werkelijke maand wijkt doorgaans minder dan 1 % af). Een latere Fluvius-export vervangt de P1-uren
   door de juiste waarden.
-- **Limiet**: SEF aanvaardt 12 uploads per uur per sleutel; normaal is het er 4 (met gas 5).
+- **Limiet**: SEF aanvaardt 12 uploads per uur per sleutel; normaal is het er 4 (met gas 5, met een
+  batterij 4 meer).
 
 ## Tests
 
