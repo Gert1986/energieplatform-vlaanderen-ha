@@ -54,9 +54,16 @@ Doet vier dingen:
      het attribuut `reden` zegt waarom. Negatief = je huidige contract is goedkoper.
    - `sensor.sef_contract_elektriciteit_dagen_tot_einde` (dagen): tot je lopende contract uit *Mijn
      contracten* eindigt; onbekend zonder einddatum.
+   - `sensor.sef_gemiddelde_prijs_elektriciteit` (c€/kWh, sinds 0.11.0): wat een kWh met je huidige
+     contract gemiddeld kost, alles inbegrepen (energie, vaste vergoeding, nettarief met capaciteitstarief,
+     heffingen en btw) gedeeld door je afname over de periode van je laatste vergelijking. Injectie wordt
+     niet verrekend, zodat zonnepanelen het getal niet drukken. Attributen: `beste_contract` en
+     `beste_gemiddelde_prijs` (het goedkoopste contract uit die vergelijking), de periode en `reden` als
+     het onbekend is. Dit is geen prijs voor het Energy-dashboard: daarvoor dient `sensor.sef_afnameprijs`
+     (wat één kWh méér kost).
    - Met gas (ingesteld, of een gascontract of -vergelijking in SEF) ook `…_gas`.
 
-   De besparing is zo recent als je laatste vergelijking: start er een op de website om ze te verversen.
+   De besparing en de gemiddelde prijs zijn zo recent als je laatste vergelijking: start er een op de website om ze te verversen.
 
 5. **Voorschot** (`GET /api/v1/mij/voorschot`, elk uur; sinds 0.6.0). Geef je maandvoorschot in op de
    website (*Mijn voorschot*); SEF rekent de kost met je huidige contract op je eigen meting:

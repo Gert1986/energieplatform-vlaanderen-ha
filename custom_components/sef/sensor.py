@@ -6,7 +6,8 @@ Prijssensoren uit SEF `/mij/prijs`: all-in EUR/kWh incl. btw voor afname en
 injectie, nu, met de prijs per kwartier van vandaag en morgen als attribuut.
 Met `gas` ook `/mij/gasprijs`: EUR/m³ incl. btw (ADR-0064). Waakhond uit
 `/mij/waakhond`: wat het goedkoopste contract uit je laatste vergelijking
-minder kost dan je huidige, en het aantal dagen tot je contract eindigt.
+minder kost dan je huidige, het aantal dagen tot je contract eindigt en
+(sinds 0.11.0) de gemiddelde all-in prijs per kWh van je huidige contract.
 Voorschot uit `/mij/voorschot` (ADR-0078): de kost van deze maand en de
 jaarinschatting tegenover je maandvoorschot, en het saldo op de afrekening;
 sinds 0.9.0 ook de kost sinds je laatste afrekening (ADR-0085).
@@ -64,7 +65,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     waakhond = await coordinator("SEF waakhond", "/mij/waakhond", WAAKHOND_INTERVAL)
     gas_in_sef = any(((waakhond.data or {}).get("gas") or {}).get(k) for k in ("contract", "vergelijking"))
     for energie in ("elektriciteit", "gas") if "gas" in conf or gas_in_sef else ("elektriciteit",):
-        sensoren += [SefBesparing(waakhond, energie), SefContractEinde(waakhond, energie)]
+        sensoren += [SefBesparing(waakhond, energie), SefContractEinde(waakhond, energie),
+                     SefGemiddeldePrijs(waakhond, energie)]
     voorschot = await coordinator("SEF voorschot", "/mij/voorschot", VOORSCHOT_INTERVAL)
     gas_voorschot = any(a.get("energie") == "gas" for a in (voorschot.data or {}).get("aansluitingen", []))
     for energie in ("elektriciteit", "gas") if "gas" in conf or gas_voorschot else ("elektriciteit",):
@@ -221,6 +223,46 @@ class SefContractEinde(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self) -> dict:
         c = self._contract()
         return {"contract": _naam(c or None), "van": c.get("van"), "tot": c.get("tot")}
+
+
+class SefGemiddeldePrijs(CoordinatorEntity, SensorEntity):
+    """De gemiddelde all-in prijs per afgenomen kWh van je huidige contract over
+    de periode van je laatste vergelijking: alles wat het kost (energie, vaste
+    vergoeding, nettarief met capaciteitstarief, heffingen, btw) gedeeld door je
+    afname; injectie niet verrekend. In c€/kWh, bewust niet EUR/kWh: dit is geen
+    prijs voor het Energy-dashboard (daarvoor `sensor.sef_afnameprijs`, de prijs
+    van een extra kWh). Onbekend zonder vergelijking die dit getal kent."""
+
+    _attr_native_unit_of_measurement = "c€/kWh"
+    _attr_suggested_display_precision = 2
+    _attr_icon = "mdi:cash-multiple"
+
+    def __init__(self, coordinator: DataUpdateCoordinator, energie: str) -> None:
+        super().__init__(coordinator)
+        self._energie = energie
+        self._attr_name = f"SEF gemiddelde prijs {energie}"
+        self._attr_unique_id = f"sef_gemiddelde_prijs_{energie}"
+
+    def _data(self) -> dict:
+        return (self.coordinator.data or {}).get(self._energie) or {}
+
+    @property
+    def native_value(self) -> float | None:
+        return _getal((self._data().get("huidig") or {}).get("gemiddelde_ct_kwh"))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        d = self._data()
+        vergelijking, beste = d.get("vergelijking") or {}, d.get("beste") or {}
+        reden = d.get("reden")
+        if reden is None and self.native_value is None and d.get("huidig"):
+            reden = "Uw laatste vergelijking is van vóór deze prijs: start een nieuwe vergelijking op de website."
+        return {
+            "contract": _naam(d.get("huidig")), "beste_contract": _naam(beste or None),
+            "beste_gemiddelde_prijs": _getal(beste.get("gemiddelde_ct_kwh")),
+            "periode_van": vergelijking.get("periode_van"), "periode_tot": vergelijking.get("periode_tot"),
+            "vergeleken_op": vergelijking.get("afgerond_op"), "reden": reden,
+        }
 
 
 def _getal(waarde: str | None) -> float | None:

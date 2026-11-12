@@ -26,9 +26,9 @@ WAAKHOND = {
                      "dagen_tot_einde": 199},
         "vergelijking": {"id": "x", "afgerond_op": "2026-10-12T09:14:03+00:00", "periode_van": "2025-10-01",
                          "periode_tot": "2026-10-01"},
-        "huidig": {"leverancier": "ENGIE", "product": "Easy", "totaal_eur": "1873.41"},
+        "huidig": {"leverancier": "ENGIE", "product": "Easy", "totaal_eur": "1873.41", "gemiddelde_ct_kwh": "38.672"},
         "beste": {"vreg_id": "1", "leverancier": "Bolt", "product": "Vast", "contracttype": "vast",
-                  "totaal_eur": "1761.02"},
+                  "totaal_eur": "1761.02", "gemiddelde_ct_kwh": "36.351"},
         "besparing_eur": "112.39", "reden": None},
     "gas": {"contract": None, "vergelijking": None, "huidig": None, "beste": None, "besparing_eur": None,
             "reden": "Nog geen afgeronde vergelijking: start er een op de website."},
@@ -109,6 +109,9 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
     assert (besparing.state, besparing.attributes["beste_contract"]) == ("112.39", "Bolt Vast")
     assert besparing.attributes["periode_van"] == "2025-10-01"
     assert hass.states.get("sensor.sef_contract_elektriciteit_dagen_tot_einde").state == "199"
+    gemiddeld = hass.states.get("sensor.sef_gemiddelde_prijs_elektriciteit")  # sinds 0.11.0
+    assert (gemiddeld.state, gemiddeld.attributes["unit_of_measurement"]) == ("38.672", "c€/kWh")
+    assert (gemiddeld.attributes["beste_contract"], gemiddeld.attributes["beste_gemiddelde_prijs"]) == ("Bolt Vast", 36.351)
     contract = hass.states.get("sensor.sef_contract_elektriciteit")
     assert contract.state == "ENGIE Easy" and contract.attributes["tariefkaart_url"] == "https://engie.be/kaart.pdf"
     assert contract.attributes["vreg_id"] == "77"
