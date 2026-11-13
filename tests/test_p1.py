@@ -118,3 +118,14 @@ def test_batterij_wh_als_kwh_of_teruggezet_telwerk_stopt():
         batterijrijen(_blokken({"laden": [400, 400, 400], "ontladen": [0, 0, 0]}), vanaf=T0, tot=T0 + KWARTIER)
     with pytest.raises(ValueError, match="teruggezet"):
         batterijrijen(_blokken({"laden": [0.1, -812.4, 0], "ontladen": [0, 0, 0]}), vanaf=T0, tot=T0 + KWARTIER)
+
+
+def test_kwartier_nu_kiest_het_lopende_kwartier_halfopen():
+    from p1 import kwartier_nu
+    k = [{"tijdstip": "2026-11-13T10:30:00+01:00", "spot_eur_mwh": "80"},
+         {"tijdstip": "2026-11-13T10:45:00+01:00", "spot_eur_mwh": "95.5"}]
+    cet = timezone(timedelta(hours=1))
+    assert kwartier_nu(k, datetime(2026, 11, 13, 10, 44, 59, tzinfo=cet))["spot_eur_mwh"] == "80"
+    assert kwartier_nu(k, datetime(2026, 11, 13, 9, 45, tzinfo=timezone.utc))["spot_eur_mwh"] == "95.5"  # = 10:45 CET
+    assert kwartier_nu(k, datetime(2026, 11, 13, 11, 0, tzinfo=cet)) is None  # einde is exclusief
+    assert kwartier_nu([], datetime(2026, 11, 13, tzinfo=cet)) is None

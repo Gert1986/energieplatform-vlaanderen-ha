@@ -4,7 +4,8 @@ p1.py
 
 Van de 5-minutenstatistieken van de P1-telwerken in Home Assistant naar de
 kwartierrijen (elektriciteit, ADR-0054), uurrijen in m³ (gas, ADR-0064) en
-batterijkwartieren (laden en ontladen, ADR-0066) die SEF verwacht. Puur: geen Home Assistant nodig.
+batterijkwartieren (laden en ontladen, ADR-0066) die SEF verwacht, en het kwartier van nu uit
+`/mij/prijs` (`kwartier_nu`). Puur: geen Home Assistant nodig.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -132,3 +133,14 @@ def in_stukken(rijen: list[dict], grootte: int = MAX_RIJEN) -> list[list[dict]]:
     if grootte % 2:
         raise ValueError("grootte moet even zijn: twee rijen per kwartier")
     return [rijen[i:i + grootte] for i in range(0, len(rijen), grootte)]
+
+
+def kwartier_nu(kwartieren: list[dict], nu: datetime) -> dict | None:
+    """Het kwartier uit `kwartieren` (SEF `/mij/prijs`, `tijdstip` ISO met tijdzone) waarin `nu` valt,
+    [start, start + 15 min), of None. Zo volgt een sensor het kwartier ook als de opvraging niet
+    precies op de kwartiergrens loopt."""
+    for k in kwartieren:
+        start = datetime.fromisoformat(k["tijdstip"])
+        if start <= nu < start + KWARTIER:
+            return k
+    return None

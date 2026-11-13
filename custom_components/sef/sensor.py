@@ -10,7 +10,8 @@ minder kost dan je huidige, het aantal dagen tot je contract eindigt en
 (sinds 0.11.0) de gemiddelde all-in prijs per kWh van je huidige contract.
 Voorschot uit `/mij/voorschot` (ADR-0078): de kost van deze maand en de
 jaarinschatting tegenover je maandvoorschot, en het saldo op de afrekening;
-sinds 0.9.0 ook de kost sinds je laatste afrekening (ADR-0085).
+sinds 0.9.0 ook de kost sinds je laatste afrekening (ADR-0085). Sinds 0.12.0 de day-ahead-
+prijs van de beurs (EUR/MWh) per kwartier, uit dezelfde opvraging als de prijssensoren.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -27,8 +28,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from . import DOMAIN, SefFout
+from .p1 import kwartier_nu
 
 _LOGGER = logging.getLogger(__name__)
 # Een prijs wijzigt hoogstens per kwartier (dynamisch) of per dag/nachtwissel.
@@ -58,7 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     prijs = await coordinator("SEF prijs", "/mij/prijs", INTERVAL)
     sensoren: list[SensorEntity] = [SefPrijs(prijs, "afname"), SefPrijs(prijs, "injectie"),
-                                    SefContract(prijs, "elektriciteit")]
+                                    SefContract(prijs, "elektriciteit"), SefSpotprijs(prijs)]
     if "gas" in conf:
         gasprijs = await coordinator("SEF gasprijs", "/mij/gasprijs", GAS_INTERVAL)
         sensoren += [SefGasprijs(gasprijs), SefContract(gasprijs, "gas")]
@@ -103,6 +106,33 @@ class SefPrijs(CoordinatorEntity, SensorEntity):
             "zone": data.get("zone_nu"), "waarschuwingen": data.get("waarschuwingen", []),
             "kwartieren": [{"start": k["tijdstip"], "prijs": None if k[self._richting] is None else float(k[self._richting])}
                            for k in data.get("kwartieren") or []],
+        }
+
+
+class SefSpotprijs(CoordinatorEntity, SensorEntity):
+    """De day-ahead-prijs van de Belgische beurs voor het kwartier van nu (EUR/MWh, zonder btw of
+    kosten), bij elk contract: bij een vast of variabel contract ter informatie. Bron: ENTSO-E, met
+    energy-charts.info als terugval. Morgen pas na de publicatie rond 13 uur."""
+
+    _attr_name = "SEF spotprijs"
+    _attr_unique_id = "sef_spotprijs"
+    _attr_native_unit_of_measurement = "EUR/MWh"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+    _unrecorded_attributes = frozenset({"kwartieren"})
+
+    @property
+    def native_value(self) -> float | None:
+        k = kwartier_nu((self.coordinator.data or {}).get("kwartieren") or [], dt_util.now())
+        return None if k is None or k.get("spot_eur_mwh") is None else float(k["spot_eur_mwh"])
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        return {
+            "waarschuwingen": [w for w in data.get("waarschuwingen", []) if w.startswith("Groothandelsprijs")],
+            "kwartieren": [{"start": k["tijdstip"], "prijs": float(k["spot_eur_mwh"])}
+                           for k in data.get("kwartieren") or [] if k.get("spot_eur_mwh") is not None],
         }
 
 

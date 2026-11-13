@@ -19,6 +19,11 @@ Doet vier dingen:
    `/mij/gasprijs`): leverancier en product van je huidige contract, met de attributen `contracttype`,
    `vreg_id`, `prijsbron`, `contractdatum` en `tariefkaart_url` (de kaart die de prijs bepaalt; leeg als die
    niet gekend is, bv. bij een prijs uit het VREG-werkboek). Sinds 0.5.0.
+   Ook uit dezelfde opvraging, sinds 0.12.0: `sensor.sef_spotprijs` (EUR/MWh, zonder btw of kosten): de
+   day-ahead-prijs van de Belgische beurs voor het kwartier van nu, bij elk contract (bij een vast of
+   variabel contract ter informatie), met de prijs per kwartier van vandaag en, na ±13 uur, morgen in het
+   attribuut `kwartieren`. Geen eigen ENTSO-E-sleutel nodig. Bron: ENTSO-E Transparency Platform, met
+   energy-charts.info (Fraunhofer ISE, CC BY 4.0) als terugval.
 2. **P1-upload**: twee minuten na elk kwartier leest hij de 5-minutenstatistieken van je vier
    P1-telwerken, maakt er kwartieren van en stuurt alles sinds de laatste meting in SEF naar
    `POST /api/v1/mij/aansluitingen/{id}/meetwaarden`. Een gemist kwartier (herstart) vult hij vanzelf aan,
