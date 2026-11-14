@@ -10,6 +10,7 @@ nep-SEF (`SefClient.vraag`). Vraagt `pytest-homeassistant-custom-component`.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -38,8 +39,14 @@ ANTWOORDEN = {
     "/mij/prijs": {"leverancier": "ENGIE", "product": "Easy", "contracttype": "vast", "zone_nu": "dag",
                    "vreg_id": "77", "tariefkaart_url": "https://engie.be/kaart.pdf",
                    "afname_nu": "0.350406532", "injectie_nu": "0.04161", "waarschuwingen": [],
-                   "kwartieren": [{"tijdstip": "2026-10-14T00:00:00+02:00", "zone": "nacht", "spot_eur_mwh": None,
-                                   "afname": "0.31", "injectie": "0.04"}]},
+                   "kwartieren": [{"tijdstip": "2026-10-14T00:00:00+02:00", "zone": "nacht", "spot_eur_mwh": "80",
+                                   "afname": "0.31", "injectie": "0.04", "beurs_allin": "0.2085"}],
+                   # Sinds 0.13.0; de maand van nu, zodat sensor.sef_maandpiek ze vindt.
+                   "capaciteit": {"eenheid": "EUR incl. btw", "tarief_eur_kw_jaar": "53.0", "ondergrens_kw": "2.5",
+                                  "jaar_eur": "28.4875", "maanden": [
+                                      {"maand": "2025-12", "piek_kw": "1.9", "kost_eur": "11.0416666667"},
+                                      {"maand": f"{datetime.now():%Y-%m}", "piek_kw": "3.95",
+                                       "kost_eur": "17.4458333333"}]}},
     "/mij/waakhond": WAAKHOND,
     "/mij/voorschot": {"eenheid": "EUR incl. btw", "aansluitingen": [
         {"aansluiting": 1, "energie": "elektriciteit", "contract": "ENGIE Easy", "voorschot_eur_maand": "93.00",
@@ -116,6 +123,14 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
     assert contract.state == "ENGIE Easy" and contract.attributes["tariefkaart_url"] == "https://engie.be/kaart.pdf"
     assert contract.attributes["vreg_id"] == "77"
     assert hass.states.get("sensor.sef_besparing_gas") is None
+    beurs = hass.states.get("sensor.sef_beursprijs_all_in")  # sinds 0.13.0, zelfde voet als de afnameprijs
+    assert beurs.attributes["kwartieren"] == [{"start": "2026-10-14T00:00:00+02:00", "prijs": 0.2085}]
+    piek = hass.states.get("sensor.sef_maandpiek")
+    assert (piek.state, piek.attributes["kost_eur"], len(piek.attributes["maanden"])) == ("3.95", 17.45, 2)
+    hoogste = hass.states.get("sensor.sef_hoogste_piek")
+    assert (hoogste.state, hoogste.attributes["maand"]) == ("3.95", f"{datetime.now():%Y-%m}")
+    capaciteit = hass.states.get("sensor.sef_capaciteitstarief")
+    assert capaciteit.state == "28.4875" and capaciteit.attributes["gemiddelde_piek_kw"] == 3.225  # 1,9 telt als 2,5
     maand = hass.states.get("sensor.sef_kost_deze_maand_elektriciteit")
     assert (maand.state, maand.attributes["voorschot_tot_nu"], maand.attributes["verschil"]) == ("51.2", 48.0, 3.2)
     assert (maand.attributes["laatste_14_dagen_kost"], maand.attributes["zelfde_dagen_vorig_jaar_kost"]) == (42.0, 60.0)

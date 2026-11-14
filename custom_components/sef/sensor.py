@@ -12,6 +12,8 @@ Voorschot uit `/mij/voorschot` (ADR-0078): de kost van deze maand en de
 jaarinschatting tegenover je maandvoorschot, en het saldo op de afrekening;
 sinds 0.9.0 ook de kost sinds je laatste afrekening (ADR-0085). Sinds 0.12.0 de day-ahead-
 prijs van de beurs (EUR/MWh) per kwartier, uit dezelfde opvraging als de prijssensoren.
+Sinds 0.13.0, ook uit die opvraging: de beursprijs all-in (EUR/kWh, met dezelfde netkosten,
+heffingen en btw als je contract) en de maandpieken met hun kost aan capaciteitstarief.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -61,7 +63,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     prijs = await coordinator("SEF prijs", "/mij/prijs", INTERVAL)
     sensoren: list[SensorEntity] = [SefPrijs(prijs, "afname"), SefPrijs(prijs, "injectie"),
-                                    SefContract(prijs, "elektriciteit"), SefSpotprijs(prijs)]
+                                    SefContract(prijs, "elektriciteit"), SefSpotprijs(prijs), SefBeursAllin(prijs),
+                                    SefMaandpiek(prijs), SefHoogstePiek(prijs), SefCapaciteitstarief(prijs)]
     if "gas" in conf:
         gasprijs = await coordinator("SEF gasprijs", "/mij/gasprijs", GAS_INTERVAL)
         sensoren += [SefGasprijs(gasprijs), SefContract(gasprijs, "gas")]
@@ -134,6 +137,123 @@ class SefSpotprijs(CoordinatorEntity, SensorEntity):
             "kwartieren": [{"start": k["tijdstip"], "prijs": float(k["spot_eur_mwh"])}
                            for k in data.get("kwartieren") or [] if k.get("spot_eur_mwh") is not None],
         }
+
+
+class SefBeursAllin(CoordinatorEntity, SensorEntity):
+    """De beursprijs van het kwartier van nu, ingepakt zoals je eigen prijs: dezelfde netkosten,
+    heffingen en btw (EUR/kWh). Zo staat ze op dezelfde voet als `sensor.sef_afnameprijs`; het
+    verschil is wat je leverancier bovenop de beurs rekent (marge, groene stroom, WKK). Vaste kosten
+    zitten in geen van beide. Morgen pas na de publicatie rond 13 uur."""
+
+    _attr_name = "SEF beursprijs all-in"
+    _attr_unique_id = "sef_beursprijs_allin"
+    _attr_native_unit_of_measurement = "EUR/kWh"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 4
+    _unrecorded_attributes = frozenset({"kwartieren"})
+
+    @property
+    def native_value(self) -> float | None:
+        k = kwartier_nu((self.coordinator.data or {}).get("kwartieren") or [], dt_util.now())
+        return None if k is None else _getal(k.get("beurs_allin"))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"kwartieren": [{"start": k["tijdstip"], "prijs": float(k["beurs_allin"])}
+                               for k in (self.coordinator.data or {}).get("kwartieren") or []
+                               if k.get("beurs_allin") is not None]}
+
+
+class _SefPiek(CoordinatorEntity, SensorEntity):
+    """Basis voor de piek- en capaciteitssensoren: `capaciteit` uit `/mij/prijs` (null bij een
+    analoge meter of een oudere SEF: onbekend). Kosten in EUR incl. btw op het tarief van nu."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator, naam: str, sleutel: str) -> None:
+        super().__init__(coordinator)
+        self._attr_name = f"SEF {naam}"
+        self._attr_unique_id = f"sef_{sleutel}"
+
+    def _c(self) -> dict:
+        return (self.coordinator.data or {}).get("capaciteit") or {}
+
+    def _maanden(self) -> list[dict]:
+        return [{"maand": m["maand"], "piek_kw": float(m["piek_kw"]), "kost_eur": round(float(m["kost_eur"]), 2)}
+                for m in self._c().get("maanden", [])]
+
+
+class SefMaandpiek(_SefPiek):
+    """De hoogste kwartierafname (kW) van deze maand tot nu, met wat die piek aan capaciteitstarief
+    kost, en alle maanden van het voorbije jaar als attribuut. P1 houdt ze per kwartier bij."""
+
+    _attr_native_unit_of_measurement = "kW"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+        super().__init__(coordinator, "maandpiek", "maandpiek")
+
+    def _deze(self) -> dict:
+        maand = f"{dt_util.now():%Y-%m}"
+        return next((m for m in self._maanden() if m["maand"] == maand), {})
+
+    @property
+    def native_value(self) -> float | None:
+        return self._deze().get("piek_kw")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        c = self._c()
+        return {"kost_eur": self._deze().get("kost_eur"), "maanden": self._maanden(),
+                "ondergrens_kw": _getal(c.get("ondergrens_kw")), "tarief_eur_kw_jaar": _getal(c.get("tarief_eur_kw_jaar"))}
+
+
+class SefHoogstePiek(_SefPiek):
+    """De hoogste maandpiek (kW) van de laatste 12 maanden, met de maand en haar kost."""
+
+    _attr_native_unit_of_measurement = "kW"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+        super().__init__(coordinator, "hoogste piek", "hoogste_piek")
+
+    def _hoogste(self) -> dict:
+        return max(self._maanden(), key=lambda m: m["piek_kw"], default={})
+
+    @property
+    def native_value(self) -> float | None:
+        return self._hoogste().get("piek_kw")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        h = self._hoogste()
+        return {"maand": h.get("maand"), "kost_eur": h.get("kost_eur")}
+
+
+class SefCapaciteitstarief(_SefPiek):
+    """Wat je maandpieken van de laatste 12 maanden samen aan capaciteitstarief kosten (EUR incl.
+    btw, op het tarief van nu; een maand zonder meting telt niet mee). Elke maandpiek telt 12
+    maanden lang voor 1/12 mee in het gemiddelde dat Fluvius aanrekent: de kost van een piek is wat
+    ze over die 12 facturen samen kost."""
+
+    _attr_native_unit_of_measurement = "EUR"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator: DataUpdateCoordinator) -> None:
+        super().__init__(coordinator, "capaciteitstarief", "capaciteitstarief")
+
+    @property
+    def native_value(self) -> float | None:
+        return _getal(self._c().get("jaar_eur"))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        maanden = self._maanden()
+        return {"maanden": len(maanden), "tarief_eur_kw_jaar": _getal(self._c().get("tarief_eur_kw_jaar")),
+                "gemiddelde_piek_kw": None if not maanden else round(
+                    sum(max(m["piek_kw"], _getal(self._c()["ondergrens_kw"])) for m in maanden) / len(maanden), 3)}
 
 
 class SefGasprijs(CoordinatorEntity, SensorEntity):

@@ -24,6 +24,24 @@ Doet vier dingen:
    variabel contract ter informatie), met de prijs per kwartier van vandaag en, na ±13 uur, morgen in het
    attribuut `kwartieren`. Geen eigen ENTSO-E-sleutel nodig. Bron: ENTSO-E Transparency Platform, met
    energy-charts.info (Fraunhofer ISE, CC BY 4.0) als terugval.
+   Sinds 0.13.0 `sensor.sef_beursprijs_all_in` (EUR/kWh): diezelfde beursprijs, maar ingepakt zoals je eigen
+   prijs, met dezelfde netkosten, heffingen en btw. Zet je die naast `sensor.sef_afnameprijs`, dan vergelijk
+   je op dezelfde voet: het verschil is wat je leverancier bovenop de beurs rekent (marge, groene stroom,
+   WKK, evenwicht). De kale spotprijs (EUR/MWh, zonder iets) is daarvoor niet geschikt. Vaste kosten zitten
+   in geen van beide. Per kwartier in het attribuut `kwartieren`; zie [Grafiek](#grafiek-eigen-prijs-tegenover-de-beurs).
+
+   **Pieken en capaciteitstarief** (sinds 0.13.0, uit dezelfde opvraging; enkel met een digitale meter):
+   - `sensor.sef_maandpiek` (kW): je hoogste kwartierafname van deze maand tot nu (met P1 elk kwartier
+     bijgewerkt). Attributen: `kost_eur` (wat die piek aan capaciteitstarief kost, EUR incl. btw),
+     `maanden` (maand, `piek_kw` en `kost_eur` van elke gemeten maand van het voorbije jaar),
+     `ondergrens_kw` (2,5 kW: een lagere piek wordt als 2,5 kW aangerekend) en `tarief_eur_kw_jaar`.
+   - `sensor.sef_hoogste_piek` (kW): de hoogste maandpiek van de laatste 12 maanden, met `maand` en `kost_eur`.
+   - `sensor.sef_capaciteitstarief` (EUR): wat al die maandpieken samen kosten, met `gemiddelde_piek_kw`
+     (het gemiddelde waarop Fluvius rekent, minstens 2,5 kW per maand) en `maanden` (hoeveel gemeten).
+     Fluvius rekent elke maand het gemiddelde van je laatste 12 maandpieken aan, dus elke piek telt 12
+     maanden lang voor 1/12 mee: `kost_eur` is wat die ene piek over die 12 facturen samen kost. Alles op het
+     tarief van je netbeheerder van vandaag, zonder het maximumtarief en de wettelijke ondergrens van de
+     netkost (die raken enkel heel kleine of heel grote verbruikers); een maand zonder meting telt niet mee.
 2. **P1-upload**: twee minuten na elk kwartier leest hij de 5-minutenstatistieken van je vier
    P1-telwerken, maakt er kwartieren van en stuurt alles sinds de laatste meting in SEF naar
    `POST /api/v1/mij/aansluitingen/{id}/meetwaarden`. Een gemist kwartier (herstart) vult hij vanzelf aan,
@@ -205,6 +223,29 @@ De vaste kosten (vaste vergoeding, capaciteitstarief) zitten bewust niet in die 
 *Gas*: bij het gastelwerk (`sensor.gas_meter_gas`) "Gebruik een entiteit met de huidige prijs" →
 `sensor.sef_gasprijs`. Ook hier zonder vaste vergoeding en vaste netkost. De attributen tonen de prijs per
 kWh en de gebruikte omrekening (kWh per m³ en de maand waarvan ze komt).
+
+## Grafiek: eigen prijs tegenover de beurs
+
+Met [ApexCharts Card](https://github.com/RomRider/apexcharts-card) (HACS) uit de attributen `kwartieren`,
+beide in EUR/kWh op één as:
+
+```yaml
+type: custom:apexcharts-card
+header: {show: true, title: Wat u betaalt tegenover de beurs}
+graph_span: 1d
+span: {start: day}
+now: {show: true}
+yaxis: [{decimals: 2}]
+series:
+  - entity: sensor.sef_afnameprijs
+    name: Mijn prijs (all-in)
+    type: column
+    data_generator: return entity.attributes.kwartieren.map(k => [new Date(k.start).getTime(), k.prijs]);
+  - entity: sensor.sef_beursprijs_all_in
+    name: Beurs (zelfde netkosten en btw)
+    type: line
+    data_generator: return entity.attributes.kwartieren.map(k => [new Date(k.start).getTime(), k.prijs]);
+```
 
 ## Wat je moet weten
 
