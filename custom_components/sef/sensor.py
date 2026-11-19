@@ -14,6 +14,7 @@ sinds 0.9.0 ook de kost sinds je laatste afrekening (ADR-0085). Sinds 0.12.0 de 
 prijs van de beurs (EUR/MWh) per kwartier, uit dezelfde opvraging als de prijssensoren.
 Sinds 0.13.0, ook uit die opvraging: de beursprijs all-in (EUR/kWh, met dezelfde netkosten,
 heffingen en btw als je contract) en de maandpieken met hun kost aan capaciteitstarief.
+Sinds 0.14.0 dragen de prijssensoren het attribuut `opbouw`: afname in energie, net, heffingen en btw; injectie in beurs en marge.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -34,6 +35,7 @@ from homeassistant.util import dt as dt_util
 
 from . import DOMAIN, SefFout
 from .p1 import kwartier_nu
+from .prijs import getal as _getal, opbouw_attribuut
 
 _LOGGER = logging.getLogger(__name__)
 # Een prijs wijzigt hoogstens per kwartier (dynamisch) of per dag/nachtwissel.
@@ -109,6 +111,8 @@ class SefPrijs(CoordinatorEntity, SensorEntity):
             "zone": data.get("zone_nu"), "waarschuwingen": data.get("waarschuwingen", []),
             "kwartieren": [{"start": k["tijdstip"], "prijs": None if k[self._richting] is None else float(k[self._richting])}
                            for k in data.get("kwartieren") or []],
+            # De splitsing van de prijs van nu, EUR/kWh: afname = energie, net, heffingen, btw; injectie = beurs, marge.
+            **opbouw_attribuut(data, self._richting),
         }
 
 
@@ -413,10 +417,6 @@ class SefGemiddeldePrijs(CoordinatorEntity, SensorEntity):
             "periode_van": vergelijking.get("periode_van"), "periode_tot": vergelijking.get("periode_tot"),
             "vergeleken_op": vergelijking.get("afgerond_op"), "reden": reden,
         }
-
-
-def _getal(waarde: str | None) -> float | None:
-    return None if waarde is None else float(waarde)
 
 
 class _SefVoorschot(CoordinatorEntity, SensorEntity):
