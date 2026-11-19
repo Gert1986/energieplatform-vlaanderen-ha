@@ -30,6 +30,13 @@ Doet vier dingen:
    WKK, evenwicht). De kale spotprijs (EUR/MWh, zonder iets) is daarvoor niet geschikt. Vaste kosten zitten
    in geen van beide. Per kwartier in het attribuut `kwartieren`; zie [Grafiek](#grafiek-eigen-prijs-tegenover-de-beurs).
 
+   **Opbouw van de prijs** (sinds 0.14.0): het attribuut `opbouw` van `sensor.sef_afnameprijs` splitst de
+   prijs van nu in `energie` (wat je leverancier rekent, na een eventuele kWh-korting), `net` (distributie en
+   transmissie), `heffingen` en `btw`, in EUR/kWh; samen zijn ze de prijs van de sensor. Bij
+   `sensor.sef_injectieprijs` splitst `opbouw` in `beurs` (de day-ahead-prijs van dit kwartier) en `marge`
+   (wat je krijgt min de beurs; negatief is wat je leverancier inhoudt). Zo leg je de prijs post per post naast
+   je eigen berekening. Vraagt een oudere SEF-server het veld niet mee, dan ontbreekt het attribuut gewoon.
+
    **Pieken en capaciteitstarief** (sinds 0.13.0, uit dezelfde opvraging; enkel met een digitale meter):
    - `sensor.sef_maandpiek` (kW): je hoogste kwartierafname van deze maand tot nu (met P1 elk kwartier
      bijgewerkt). Attributen: `kost_eur` (wat die piek aan capaciteitstarief kost, EUR incl. btw),
