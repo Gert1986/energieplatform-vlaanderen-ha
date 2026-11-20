@@ -15,6 +15,7 @@ prijs van de beurs (EUR/MWh) per kwartier, uit dezelfde opvraging als de prijsse
 Sinds 0.13.0, ook uit die opvraging: de beursprijs all-in (EUR/kWh, met dezelfde netkosten,
 heffingen en btw als je contract) en de maandpieken met hun kost aan capaciteitstarief.
 Sinds 0.14.0 dragen de prijssensoren het attribuut `opbouw`: afname in energie, net, heffingen en btw; injectie in beurs en marge.
+Sinds 0.14.1 volgen ze het kwartier van de klok (`prijs.prijs_nu`) en lopen ze niet meer tot 15 minuten achter.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -35,7 +36,7 @@ from homeassistant.util import dt as dt_util
 
 from . import DOMAIN, SefFout
 from .p1 import kwartier_nu
-from .prijs import getal as _getal, opbouw_attribuut
+from .prijs import getal as _getal, opbouw_attribuut, prijs_nu
 
 _LOGGER = logging.getLogger(__name__)
 # Een prijs wijzigt hoogstens per kwartier (dynamisch) of per dag/nachtwissel.
@@ -100,8 +101,7 @@ class SefPrijs(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        waarde = (self.coordinator.data or {}).get(f"{self._richting}_nu")
-        return None if waarde is None else float(waarde)
+        return prijs_nu(self.coordinator.data or {}, self._richting, dt_util.now(), kwartier_nu)
 
     @property
     def extra_state_attributes(self) -> dict:

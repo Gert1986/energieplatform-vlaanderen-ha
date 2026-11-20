@@ -30,6 +30,10 @@ Doet vier dingen:
    WKK, evenwicht). De kale spotprijs (EUR/MWh, zonder iets) is daarvoor niet geschikt. Vaste kosten zitten
    in geen van beide. Per kwartier in het attribuut `kwartieren`; zie [Grafiek](#grafiek-eigen-prijs-tegenover-de-beurs).
 
+   Sinds 0.14.1 loopt `sensor.sef_afnameprijs` (en de injectieprijs) met de klok mee: ze toont de prijs van het
+   lopende kwartier uit `kwartieren`. Daarvoor kon ze tot 15 minuten achterlopen, omdat ze de waarde van de
+   laatste opvraging bleef tonen (die loopt per kwartier vanaf het opstarten van Home Assistant).
+
    **Opbouw van de prijs** (sinds 0.14.0): het attribuut `opbouw` van `sensor.sef_afnameprijs` splitst de
    prijs van nu in `energie` (wat je leverancier rekent, na een eventuele kWh-korting), `net` (distributie en
    transmissie), `heffingen` en `btw`, in EUR/kWh; samen zijn ze de prijs van de sensor. Bij

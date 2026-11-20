@@ -35,3 +35,20 @@ def test_oudere_server_of_geen_spotprijs_geeft_geen_attribuut():
     assert opbouw_attribuut({}, "afname") == {}
     assert opbouw_attribuut({"opbouw_injectie": None}, "injectie") == {}
     assert opbouw_attribuut({"opbouw": {}}, "afname") == {}
+
+
+def test_prijs_nu_volgt_het_kwartier_van_de_klok_en_niet_de_laatste_opvraging():
+    from datetime import datetime, timezone
+
+    from p1 import kwartier_nu
+    from prijs import prijs_nu
+
+    data = {"afname_nu": "0.30", "kwartieren": [
+        {"tijdstip": "2026-11-20T10:00:00+00:00", "afname": "0.30", "injectie": None},
+        {"tijdstip": "2026-11-20T10:15:00+00:00", "afname": "0.25", "injectie": None}]}
+    # Opgevraagd om 10:00, nu is het 10:20: de prijs van 10:15, niet die van de opvraging.
+    assert prijs_nu(data, "afname", datetime(2026, 11, 20, 10, 20, tzinfo=timezone.utc), kwartier_nu) == 0.25
+    # Injectie None in het kwartier: terugval op injectie_nu (hier afwezig) = None.
+    assert prijs_nu(data, "injectie", datetime(2026, 11, 20, 10, 20, tzinfo=timezone.utc), kwartier_nu) is None
+    # Buiten de kwartieren: de waarde van de laatste opvraging.
+    assert prijs_nu(data, "afname", datetime(2026, 12, 1, tzinfo=timezone.utc), kwartier_nu) == 0.30
