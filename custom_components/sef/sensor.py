@@ -62,6 +62,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 raise UpdateFailed(str(fout)) from fout
         c = DataUpdateCoordinator(hass, _LOGGER, name=naam, update_method=haal, update_interval=interval)
         await c.async_refresh()  # SEF onbereikbaar: sensoren onbeschikbaar, geen geblokkeerde opstart
+        gegevens.setdefault("coordinators", {})[naam] = c  # voor diagnostics.py
         return c
 
     prijs = await coordinator("SEF prijs", "/mij/prijs", INTERVAL)

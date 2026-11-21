@@ -171,3 +171,19 @@ async def test_yaml_import_maakt_en_werkt_bij(recorder_mock, enable_custom_integ
     (entry,) = hass.config_entries.async_entries(sef.DOMAIN)
     assert entry.data["tarief_1"] == "nacht" and "meter" not in entry.data  # de YAML vervangt, vult niet aan
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_diagnose_zonder_geheimen_of_bedragen(recorder_mock, enable_custom_integrations, hass, nep_sef):
+    """Het diagnosebestand belandt vaak in een publiek issue: geen sleutel, meter-ID of bedrag erin."""
+    from custom_components.sef.diagnostics import async_get_config_entry_diagnostics
+    yaml = {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False, "meter": "abcd1234"}
+    await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT}, data=yaml)
+    await hass.async_block_till_done()
+    (entry,) = hass.config_entries.async_entries(sef.DOMAIN)
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    tekst = str(diag)
+    for geheim in ("sef_goed", "abcd1234", "0.350406532", "1873.41", "ENGIE"):
+        assert geheim not in tekst, geheim
+    assert diag["instellingen"]["sleutel"] == "**REDACTED**"
+    prijs = diag["opvragingen"]["SEF prijs"]
+    assert prijs["gelukt"] and prijs["kwartieren"] == 1 and "afname_nu" in prijs["velden"]

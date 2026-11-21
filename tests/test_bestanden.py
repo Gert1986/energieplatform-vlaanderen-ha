@@ -3,7 +3,8 @@ test_bestanden.py
 ~~~~~~~~~~~~~~~~~
 
 Zonder Home Assistant: elk Python-bestand van de integratie parset, `manifest.json` en `hacs.json` zijn
-geldige JSON met een versie, en elke `from .module import naam` in de integratie bestaat echt.
+geldige JSON met een versie, de vertalingen hebben dezelfde sleutels, de logo's hebben de maten
+van Home Assistant, en elke `from .module import naam` in de integratie bestaat echt.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -38,3 +39,23 @@ def test_manifest_en_hacs_zijn_geldige_json_met_versie():
     manifest = json.loads((MAP / "manifest.json").read_text(encoding="utf-8"))
     assert re.fullmatch(r"\d+\.\d+\.\d+", manifest["version"]) and manifest["domain"] == "sef"
     assert json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
+
+
+def _sleutels(d: dict, pad: str = "") -> set[str]:
+    return {k for n, v in d.items() for k in (_sleutels(v, f"{pad}{n}.") if isinstance(v, dict) else {f"{pad}{n}"})}
+
+
+def test_vertalingen_hebben_dezelfde_sleutels():
+    """Een tekst die enkel in nl.json staat, toont Home Assistant in het Engels als ruwe sleutel."""
+    nl, en = (_sleutels(json.loads((MAP / "translations" / f"{t}.json").read_text(encoding="utf-8"))) for t in ("nl", "en"))
+    assert nl == en, f"enkel nl: {nl - en}, enkel en: {en - nl}"
+
+
+@pytest.mark.parametrize("naam,breed,hoog", [("icon.png", 256, 256), ("icon@2x.png", 512, 512),
+                                              ("logo.png", None, 128), ("logo@2x.png", None, 256)])
+def test_logo_maten(naam, breed, hoog):
+    """Home Assistant toont `brand/` enkel met de vaste maten (icoon vierkant, logo 128/256 hoog)."""
+    kop = (MAP / "brand" / naam).read_bytes()[:24]
+    assert kop[:8] == b"\x89PNG\r\n\x1a\n"
+    b, h = int.from_bytes(kop[16:20], "big"), int.from_bytes(kop[20:24], "big")
+    assert h == hoog and b == (breed or b)

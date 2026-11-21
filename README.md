@@ -7,7 +7,9 @@ van de rekenkern van het platform.
 
 **Documentatie en uitleg:** <https://energieplatform-vlaanderen.be/homeassistant.php> ·
 **Je account en sleutel:** <https://energieplatform-vlaanderen.be/mijn/homeassistant.php> ·
-**Installeren:** via HACS (aangepaste repository, zie [Installeren](#installeren)).
+**Installeren:** via HACS (aangepaste repository, zie [Installeren](#installeren)), of rechtstreeks:
+
+[![Openen in Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Gert1986&repository=energieplatform-vlaanderen-ha&category=integration)
 
 Doet vier dingen:
 
@@ -153,7 +155,10 @@ Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.ph
 
 ## Installeren
 
-1. **Met HACS:** *HACS → ⋮ (drie puntjes) → Aangepaste repositories*, plak
+1. **Met HACS:** de knop *Openen in Home Assistant* hierboven (ook op de website, na het aanmaken van je
+   sleutel) vraagt eenmalig het adres van je Home Assistant en opent daar HACS met deze repository al
+   ingevuld: *Downloaden*, herstart Home Assistant en ga verder bij punt 2. Met de hand:
+   *HACS → ⋮ (drie puntjes) → Aangepaste repositories*, plak
    `https://github.com/Gert1986/energieplatform-vlaanderen-ha`, kies type *Integratie* en voeg toe. Zoek
    daarna *Energieplatform Vlaanderen* in HACS, download en herstart Home Assistant. Een nieuwe versie
    verschijnt dan vanzelf als update in HACS.
@@ -197,6 +202,18 @@ in de YAML werkt die bij). In `secrets.yaml`: `sef_sleutel: sef_...`, en in `con
    0.3.0 met YAML gestart, daarna 0.4.0, zelfde `entity_id`'s). De YAML vervangt bij elke start de ingave: een
    regel die je schrapt, verdwijnt ook daar.
 
+## Updates
+
+Een nieuwe versie verschijnt in HACS als update. Wat je daarbij mag verwachten:
+
+- **Entity-ID's blijven.** Geen enkele bestaande sensor krijgt een andere `unique_id`, dus je dashboards,
+  automatiseringen en het Energy-dashboard blijven werken. Een naam of ID die je zelf wijzigde, blijft.
+- **Nieuwe sensoren komen er enkel bij.** Wat er was, verdwijnt niet zonder vermelding in de release notes.
+- **In elke taal dezelfde ID's.** De namen liggen vast in de integratie en hangen niet af van de taal van je
+  Home Assistant: ook in een Engelse of Franse installatie heet het `sensor.sef_afnameprijs`.
+- **Geen verzonnen nul.** Ontbreekt een waarde (bv. de prijs van morgen vóór 13 uur, gas zonder omrekening),
+  dan is de sensor *onbekend*; is SEF niet te bereiken, dan *niet beschikbaar*. Nooit 0 alsof dat klopt.
+
 ## Een melding als het goedkoper kan
 
 Voorbeeld van een automatisering (de besparing geldt voor de periode van je laatste vergelijking):
@@ -225,14 +242,55 @@ automation:
           message: Je elektriciteitscontract loopt over {{ states('sensor.sef_contract_elektriciteit_dagen_tot_einde') }} dagen af.
 ```
 
+## De vaatwasser in de goedkoopste uren
+
+Een sensor die *aan* staat in de 12 goedkoopste kwartieren (3 uur) van vandaag, uit het attribuut
+`kwartieren` van je eigen all-in prijs. Werkt bij elk contract: dynamisch volgt het de beurs, dag/nacht kiest
+de nacht, bij een enkelvoudig vast tarief is elk kwartier even goedkoop en staat ze altijd aan.
+
+```yaml
+template:
+  - binary_sensor:
+      - name: SEF goedkope uren
+        unique_id: sef_goedkope_uren
+        state: >
+          {% set vandaag = now().strftime('%Y-%m-%d') %}
+          {% set prijzen = state_attr('sensor.sef_afnameprijs', 'kwartieren') | default([], true)
+               | selectattr('start', 'match', vandaag) | map(attribute='prijs')
+               | reject('none') | sort | list %}
+          {% set nu = states('sensor.sef_afnameprijs') %}
+          {{ is_number(nu) and prijzen | count >= 12 and nu | float <= prijzen[11] }}
+
+automation:
+  - alias: SEF - vaatwasser in de goedkope uren
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.sef_goedkope_uren
+        to: "on"
+    condition:   # zelf aan te maken helper: aan = gevuld en klaar om te starten
+      - condition: state
+        entity_id: input_boolean.vaatwasser_klaar
+        state: "on"
+    action:
+      - service: switch.turn_on
+        target: {entity_id: switch.vaatwasser}
+      - service: input_boolean.turn_off
+        target: {entity_id: input_boolean.vaatwasser_klaar}
+```
+
+Meer of minder uren: vervang `12` en `prijzen[11]` (bv. 8 kwartieren = 2 uur: `8` en `prijzen[7]`).
+
 ## Energy-dashboard
 
-*Instellingen → Dashboards → Energie → Elektriciteitsnet*: bij elk afnametelwerk "Gebruik een entiteit
-met de huidige prijs" → `sensor.sef_afnameprijs`; bij elk injectietelwerk → `sensor.sef_injectieprijs`.
-De vaste kosten (vaste vergoeding, capaciteitstarief) zitten bewust niet in die prijs.
+*Instellingen → Dashboards → Energie*, bij elk telwerk "Gebruik een entiteit met de huidige prijs":
 
-*Gas*: bij het gastelwerk (`sensor.gas_meter_gas`) "Gebruik een entiteit met de huidige prijs" →
-`sensor.sef_gasprijs`. Ook hier zonder vaste vergoeding en vaste netkost. De attributen tonen de prijs per
+| Vak in het Energy-dashboard | Telwerk (HomeWizard) | Prijsentiteit |
+|---|---|---|
+| Elektriciteitsnet → Netverbruik | `…_energy_import_tariff_1` en `_2` | `sensor.sef_afnameprijs` |
+| Elektriciteitsnet → Teruglevering aan het net | `…_energy_export_tariff_1` en `_2` | `sensor.sef_injectieprijs` |
+| Gasverbruik | `sensor.gas_meter_gas` | `sensor.sef_gasprijs` |
+
+De vaste kosten (vaste vergoeding, capaciteitstarief, vaste netkost gas) zitten bewust niet in die prijzen. De attributen tonen de prijs per
 kWh en de gebruikte omrekening (kWh per m³ en de maand waarvan ze komt).
 
 ## Grafiek: eigen prijs tegenover de beurs
@@ -268,6 +326,9 @@ series:
 - **Gas in m³, SEF rekent om**: met de omrekening van de laatste volledige maand in je Fluvius-export
   (de werkelijke maand wijkt doorgaans minder dan 1 % af). Een latere Fluvius-export vervangt de P1-uren
   door de juiste waarden.
+- **Een probleem melden**: *Instellingen → Apparaten en diensten → Energieplatform Vlaanderen → ⋮ →
+  Diagnostiek downloaden* (sinds 0.15.0) en voeg het bestand bij je issue. Je sleutel, meter-ID, bedragen en
+  contract staan er niet in: enkel je instellingen en per opvraging bij SEF of ze lukte en welke velden terugkwamen.
 - **Limiet**: SEF aanvaardt 12 uploads per uur per sleutel; normaal is het er 4 (met gas 5, met een
   batterij 4 meer).
 
