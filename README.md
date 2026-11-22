@@ -34,7 +34,10 @@ Doet vier dingen:
 
    Sinds 0.14.1 loopt `sensor.sef_afnameprijs` (en de injectieprijs) met de klok mee: ze toont de prijs van het
    lopende kwartier uit `kwartieren`. Daarvoor kon ze tot 15 minuten achterlopen, omdat ze de waarde van de
-   laatste opvraging bleef tonen (die loopt per kwartier vanaf het opstarten van Home Assistant).
+   laatste opvraging bleef tonen (die loopt per kwartier vanaf het opstarten van Home Assistant). Sinds 0.15.1
+   schrijft ze die waarde ook echt weg op de kwartiergrens; in 0.14.1 en 0.15.0 rekende ze het juiste kwartier,
+   maar zag Home Assistant het pas bij de volgende opvraging (zelfde achterstand). Geldt ook voor
+   `sensor.sef_spotprijs` en `sensor.sef_beursprijs_all_in`.
 
    **Opbouw van de prijs** (sinds 0.14.0): het attribuut `opbouw` van `sensor.sef_afnameprijs` splitst de
    prijs van nu in `energie` (wat je leverancier rekent, na een eventuele kWh-korting), `net` (distributie en

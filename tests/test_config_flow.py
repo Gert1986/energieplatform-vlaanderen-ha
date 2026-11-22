@@ -187,3 +187,24 @@ async def test_diagnose_zonder_geheimen_of_bedragen(recorder_mock, enable_custom
     assert diag["instellingen"]["sleutel"] == "**REDACTED**"
     prijs = diag["opvragingen"]["SEF prijs"]
     assert prijs["gelukt"] and prijs["kwartieren"] == 1 and "afname_nu" in prijs["velden"]
+
+
+async def test_prijs_springt_op_de_kwartiergrens(recorder_mock, enable_custom_integrations, hass, nep_sef, freezer):
+    """Sinds 0.15.1: de nieuwe kwartierprijs staat er op de kwartiergrens, niet pas bij de volgende
+    opvraging (die loopt per 15 min vanaf het opstarten, hier niet binnen de 10 min)."""
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+    freezer.move_to("2026-10-14T10:05:00+00:00")
+    prijs = ANTWOORDEN["/mij/prijs"] | {"kwartieren": [
+        {"tijdstip": "2026-10-14T10:00:00+00:00", "afname": "0.30", "injectie": "0.04", "spot_eur_mwh": "80"},
+        {"tijdstip": "2026-10-14T10:15:00+00:00", "afname": "0.40", "injectie": "0.05", "spot_eur_mwh": "120"}]}
+    with patch.dict(ANTWOORDEN, {"/mij/prijs": prijs}):
+        yaml = {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False}
+        await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT},
+                                                  data=yaml)
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.sef_afnameprijs").state == "0.3"
+        freezer.move_to("2026-10-14T10:15:00+00:00")
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.sef_afnameprijs").state == "0.4"
+        assert hass.states.get("sensor.sef_spotprijs").state == "120.0"

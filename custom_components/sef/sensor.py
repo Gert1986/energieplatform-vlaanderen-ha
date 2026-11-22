@@ -15,7 +15,8 @@ prijs van de beurs (EUR/MWh) per kwartier, uit dezelfde opvraging als de prijsse
 Sinds 0.13.0, ook uit die opvraging: de beursprijs all-in (EUR/kWh, met dezelfde netkosten,
 heffingen en btw als je contract) en de maandpieken met hun kost aan capaciteitstarief.
 Sinds 0.14.0 dragen de prijssensoren het attribuut `opbouw`: afname in energie, net, heffingen en btw; injectie in beurs en marge.
-Sinds 0.14.1 volgen ze het kwartier van de klok (`prijs.prijs_nu`) en lopen ze niet meer tot 15 minuten achter.
+Sinds 0.14.1 volgen ze het kwartier van de klok (`prijs.prijs_nu`); sinds 0.15.1 schrijven ze hun toestand
+ook op elke kwartiergrens weg (`_Kwartierklok`), anders zag HA de nieuwe prijs pas bij de volgende opvraging.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -29,8 +30,9 @@ import aiohttp
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -85,7 +87,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities(sensoren)
 
 
-class SefPrijs(CoordinatorEntity, SensorEntity):
+class _Kwartierklok:
+    """Schrijft de toestand opnieuw weg op elke kwartiergrens. `native_value` kiest het kwartier van de
+    klok, maar HA leest die pas als de coördinator ververst (om de 15 min, gerekend vanaf het opstarten):
+    zonder deze tik verscheen de nieuwe prijs tot 15 minuten te laat. Vóór CoordinatorEntity in de bases."""
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(async_track_time_change(self.hass, self._kwartier_tik, minute=[0, 15, 30, 45], second=0))
+
+    @callback
+    def _kwartier_tik(self, _nu) -> None:
+        self.async_write_ha_state()
+
+
+class SefPrijs(_Kwartierklok, CoordinatorEntity, SensorEntity):
     """`afname_nu` of `injectie_nu`; injectie is wat je krijgt."""
 
     _attr_native_unit_of_measurement = "EUR/kWh"
@@ -117,7 +133,7 @@ class SefPrijs(CoordinatorEntity, SensorEntity):
         }
 
 
-class SefSpotprijs(CoordinatorEntity, SensorEntity):
+class SefSpotprijs(_Kwartierklok, CoordinatorEntity, SensorEntity):
     """De day-ahead-prijs van de Belgische beurs voor het kwartier van nu (EUR/MWh, zonder btw of
     kosten), bij elk contract: bij een vast of variabel contract ter informatie. Bron: ENTSO-E, met
     energy-charts.info als terugval. Morgen pas na de publicatie rond 13 uur."""
@@ -144,7 +160,7 @@ class SefSpotprijs(CoordinatorEntity, SensorEntity):
         }
 
 
-class SefBeursAllin(CoordinatorEntity, SensorEntity):
+class SefBeursAllin(_Kwartierklok, CoordinatorEntity, SensorEntity):
     """De beursprijs van het kwartier van nu, ingepakt zoals je eigen prijs: dezelfde netkosten,
     heffingen en btw (EUR/kWh). Zo staat ze op dezelfde voet als `sensor.sef_afnameprijs`; het
     verschil is wat je leverancier bovenop de beurs rekent (marge, groene stroom, WKK). Vaste kosten
