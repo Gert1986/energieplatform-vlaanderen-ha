@@ -30,6 +30,10 @@ Elk punt heeft een voorstel waarmee het plan verder kan. Gert beslist vóór de 
 - **B4 Maandgrens** (vóór S1). Voorstel: SEF geeft na het einde van de maand kwartieren met
   `raming: true`, gerekend met de formule van het huidige contract op de day-ahead-prijs (dynamisch) of met
   dezelfde dag/nachtprijs (vast en variabel). Dat is een API- en semantiekwijziging in SEF, dus een SEF-ADR.
+- **ADR-0001: beslist op 2026-11-25, lokaal plannen.**
+- **B5 beantwoord (2026-11-25):** ja, met terugmelding. Zie ADR-0001 §B5 (Marstek Venus E 3.0 via
+  `marstek_modbus`; de RS485-bedrijfsmodus moet aan; de schrijfactie zelf meldt geen fout, dus de sturing
+  controleert het gemeten vermogen).
 - **B5 Batterij beschrijfbaar?** (vóór fase 3). Heeft Gerts batterij een lokale HA-integratie waarmee je
   modus en vermogen kunt **schrijven**, met terugmelding? Zonder zo'n integratie blijft elke batterijsturing
   dry-run.
@@ -213,9 +217,9 @@ Tests in `test_piek.py` (nieuw):
 - een herstart midden in een kwartier;
 - de ondergrens boven de maandpiek (begin van de maand).
 
-## Daarna: beslissing ADR-0001, dan planner en modi
+## Daarna: planner en modi (ADR-0001 aanvaard: lokaal)
 
-Eerst beslist Gert over ADR-0001 (lokaal of op de server plannen) en B5. Bij **lokaal plannen** (het voorstel):
+ADR-0001 en B5 zijn beslist (2026-11-25). Wat volgt:
 
 1. `select.sef_modus` (monitor, advies, dry-run, automatisch). Standaard monitor. Automatisch enkel na een
    expliciete keuze. `switch.sef_pauze` met een duur.

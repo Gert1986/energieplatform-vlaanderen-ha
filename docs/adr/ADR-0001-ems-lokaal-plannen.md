@@ -2,7 +2,7 @@
 
 ## Status
 
-VOORGESTELD (2026-11-24, concept: review van de EMS-roadmap, nog niet beslist door Gert)
+AANVAARD (2026-11-25, beslist door Gert; voorgesteld 2026-11-24)
 
 ## Context
 
@@ -41,8 +41,14 @@ kwartieren vóór de deadline, met de kost van een nieuwe maandpiek erbij".
 
 ## Beslissing
 
-Nog open. Voorstel: **optie 2**, ingevoerd langs optie 3. Eerst de signalen (fase 1 en 2), daarna de planner
-in de integratie, en sturing pas na een dry-run op Gerts eigen opstelling.
+**Optie 2: lokaal plannen**, ingevoerd langs optie 3. De signalen staan er (0.18.0 prijssignalen, 0.19.0 Peak
+Guard). Daarna komen de planner en de modi in de integratie. Sturing komt pas na een dry-run op Gerts eigen
+opstelling, en enkel voor hardware die getest is.
+
+- SEF levert enkel prijzen en capaciteitstarief (`/mij/prijs`). Er gaan geen plannen, vertrektijden, SOC,
+  aanwezigheid of comfortwaarden naar SEF. Een upload van planresultaten vraagt een nieuwe ADR en een DPIA.
+- SEF stuurt geen commando's naar HA. Er komt geen commandocontract op de server.
+- De planner rekent enkel met de prijzen van SEF, nooit met een eigen prijsberekening.
 
 ## Reden
 
@@ -115,6 +121,32 @@ in de integratie, en sturing pas na een dry-run op Gerts eigen opstelling.
 3. Fase 1 in `prijs.py`, met een beslissing over de maandgrens.
 4. Peak Guard op het telwerk, met de capaciteitskost.
 5. Deze ADR beslissen vóór fase 3.
+
+## B5: Gerts batterij (bekeken op 2026-11-25)
+
+Marstek Venus E 3.0 via de community-integratie `marstek_modbus` 2026.10.1 (registers `e_v3.yaml`, lokaal
+via Modbus TCP). Gelezen in Gerts HA (entiteitenregister en de broncode van de integratie):
+
+- **Schrijven kan.** `select.marstek_venus_modbus_geforceerde_modus` (register 42010: standby, charge,
+  discharge), `number.marstek_venus_modbus_forceer_laadvermogen` en `_forceer_ontlaadvermogen` (42020 en
+  42021, 0 tot 2500 W), `_laden_tot_soc` (42011) en `select.marstek_venus_modbus_gebruikersmodus` (43000).
+  Geforceerd laden en ontladen werkt enkel met de RS485-bedrijfsmodus aan (register 42000,
+  `switch.marstek_venus_modbus_rs485_bedrijfsmodus`). Die entiteit staat bij Gert uitgeschakeld.
+- **Terugmelding is er, op twee niveaus.**
+  1. Het setpoint wordt teruggelezen. De `select` en `number` tonen eerst de geschreven waarde (optimistisch).
+     Daarna leest de coordinator het register opnieuw bij elke poll. Een `number` waarvan het schrijven faalt,
+     ververst meteen en springt terug.
+  2. Het gemeten effect. `sensor.marstek_venus_modbus_ac_vermogen` (30006), `_batterijvermogen` (30001) en
+     `_omvormer_status` (35100: Standby, Charge, Discharge, ...). Na een geslaagde schrijfactie leest de
+     integratie `ac_power` en `battery_power` na 3,5 s opnieuw, tot vijf keer.
+- **Wat ontbreekt.** Een mislukte schrijfactie geeft geen fout terug aan wie de service aanroept: ze staat enkel
+  in het logboek. De sturing moet dus zelf controleren of het gemeten vermogen en de omvormerstatus volgen,
+  binnen een time-out. Lukt dat niet, dan terug naar standby en een Repair. Het is ook niet bekend of de
+  batterij zelf terugvalt als HA stopt terwijl ze geforceerd laadt. Daarom zet de integratie bij het
+  ontladen van de integratie en bij een fout de batterij altijd op standby, met `laden_tot_soc` als grens.
+- **Merkonafhankelijk (SEF ADR-0066 §8).** Geen Marstek-code in de integratie. De gebruiker koppelt zelf
+  welke entiteit de modus zet, welke het vermogen zet en welke sensor het gemeten vermogen terugmeldt. De
+  integratie kent enkel "laden, ontladen, stop", een vermogen en een terugmelding.
 
 ## Gevolgen
 
