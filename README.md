@@ -76,7 +76,7 @@ Doet vier dingen:
 
    De eerste keer begint de upload bij het eerste volledige kwartier dat het telwerk in de statistiek heeft
    (hoogstens 10 dagen terug), daarna na het laatste batterijkwartier in SEF. Meer dan 10 kWh in één kwartier
-   stopt de upload met een melding: dan meldt het telwerk meestal Wh terwijl het kWh zegt.
+   stopt de upload met een Repair: dan meldt het telwerk meestal Wh terwijl het kWh zegt.
 3. **Gas** (optioneel, sleutel `gas`): elk uur (7 minuten na het uur) het gasverbruik in m³ van elk volledig
    uur sinds de laatste gasmeting in SEF; SEF rekent om naar kWh met de omrekening uit je eigen
    Fluvius-gasexport. Plus de sensor `sensor.sef_gasprijs`: wat één m³ gas nu kost met je huidige
@@ -144,7 +144,7 @@ Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.ph
   `GEEN_OMREKENFACTOR` en blijft de gasprijssensor onbekend). De P1-stroom staat per aansluiting aan of uit,
   dus zet hem ook voor je gasaansluiting aan.
 - **P1-stroom aan** op de website: *Mijn Energieplatform → Instellingen → P1-meter → P1-stroom toestaan*.
-  Zonder die toestemming weigert SEF elke upload (`P1_GEEN_TOESTEMMING`, melding in Home Assistant). Daar
+  Zonder die toestemming weigert SEF elke upload (`P1_GEEN_TOESTEMMING`, Repair in Home Assistant). Daar
   stop je de stroom ook en wis je de P1-gegevens.
 - **Batterijstroom aan** (enkel met de batterijsleutels): op dezelfde plaats, *Batterijstroom toestaan*.
   Een eigen toestemming; zonder weigert SEF de batterijkwartieren (`BATTERIJ_GEEN_TOESTEMMING`), de
@@ -170,16 +170,21 @@ Download en uitleg ook op https://energieplatform-vlaanderen.be/homeassistant.ph
    <https://energieplatform-vlaanderen.be/homeassistant.php> daar uit. Herstart Home Assistant.
 2. *Instellingen → Apparaten en diensten → Integratie toevoegen → Energieplatform Vlaanderen*. Eerst het adres (laat staan) en je
    Home Assistant-sleutel; SEF controleert hem meteen. Daarna optioneel de P1-meter (punten 3 en 4): laat
-   alles leeg voor enkel de prijs- en waakhondsensoren. Later de meter of telwerken toevoegen of wijzigen:
-   de integratie verwijderen en opnieuw toevoegen (een optiescherm is er nog niet; het meter-ID wijzig je best
-   nooit, SEF weigert een ander ID).
+   alles leeg voor enkel de prijs- en waakhondsensoren. Later de meter, telwerken of sleutel wijzigen (sinds
+   0.17.0): bij de integratie *⋮ → Opnieuw configureren*. Laat de sleutel leeg om de huidige te houden; maak
+   een telwerkveld leeg om het weg te halen. De entiteiten blijven dezelfde. Het meter-ID wijzig je best
+   nooit: SEF weigert een ander ID (dat verschijnt dan als Repair). Komt je ingave uit de YAML, pas dan de
+   YAML aan.
 3. Zoek de entiteiten van de HomeWizard P1: *Instellingen → Ontwikkelhulpmiddelen → Statussen*, zoek op
    `energy_import_tariff` en `energy_export_tariff`. Het zijn kWh-tellers (`state_class: total_increasing`).
 4. Het meter-ID: het serienummer van de HomeWizard P1-meter (*Instellingen → Apparaten → HomeWizard →
    apparaatinfo*), enkel letters en cijfers. SEF koppelt de eerste upload aan dit ID; een ander ID daarna
    wordt geweigerd. Kies het dus één keer en laat het staan.
-5. Klaar: na een minuut loopt de eerste upload. Meldingen van SEF verschijnen als melding in Home
-   Assistant (*SEF weigerde de P1-upload …*) en in het logboek.
+5. Klaar: na een minuut loopt de eerste upload. Weigert SEF een upload, of heeft een telwerk geen
+   statistiek, dan verschijnt dat sinds 0.16.0 onder *Instellingen → Reparaties* (*SEF weigerde de
+   P1-upload …*) en in het logboek; de Repair verdwijnt vanzelf zodra de upload weer lukt. Een tijdelijke
+   fout (SEF onbereikbaar of bezet, te veel aanvragen) komt enkel in het logboek: het volgende venster
+   probeert opnieuw. Tot 0.15.1 was elke weigering een melding.
 
 **Of in YAML** (zoals tot versie 0.3.0; wordt bij het opstarten in de integratie ingelezen, en een wijziging
 in de YAML werkt die bij). In `secrets.yaml`: `sef_sleutel: sef_...`, en in `configuration.yaml`:
@@ -331,7 +336,9 @@ series:
   door de juiste waarden.
 - **Een probleem melden**: *Instellingen → Apparaten en diensten → Energieplatform Vlaanderen → ⋮ →
   Diagnostiek downloaden* (sinds 0.15.0) en voeg het bestand bij je issue. Je sleutel, meter-ID, bedragen en
-  contract staan er niet in: enkel je instellingen en per opvraging bij SEF of ze lukte en welke velden terugkwamen.
+  contract staan er niet in, en sinds 0.16.0 ook geen eigen adres van SEF en geen entity-ID's van je
+  telwerken: enkel je instellingen, de versies van de integratie en Home Assistant, per opvraging bij SEF of
+  ze lukte en welke velden terugkwamen, en per upload wanneer hij laatst liep en lukte, met de foutcode.
 - **Limiet**: SEF aanvaardt 12 uploads per uur per sleutel; normaal is het er 4 (met gas 5, met een
   batterij 4 meer).
 

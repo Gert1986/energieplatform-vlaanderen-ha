@@ -20,12 +20,12 @@ from datetime import datetime, timedelta
 import aiohttp
 import voluptuous as vol
 
-from homeassistant.components import persistent_notification
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_change
 from homeassistant.helpers.typing import ConfigType
@@ -41,6 +41,7 @@ MAX_DAGEN_TERUG = 10  # zoals SEF en de bewaartermijn van de korte-termijnstatis
 STANDAARD_URL = "https://energieplatform-vlaanderen.be"
 METER_PATROON = re.compile(r"[0-9A-Za-z]{4,64}")
 STANDAARD = {"url": STANDAARD_URL, "tarief_1": "dag", "enkelvoudig": False}
+TAKEN = ("sef_p1", "sef_p1_gas", "sef_batterij")  # ook het id van hun Repair
 
 CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({
     vol.Optional("url", default=STANDAARD_URL): cv.url,  # enkel anders voor een test- of tailnet-adres
@@ -76,10 +77,13 @@ class SefClient:
     async def vraag(self, methode: str, pad: str, json: dict | None = None) -> dict:
         async with self._sessie.request(methode, self._basis + pad, json=json, headers=self._kop,
                                         timeout=aiohttp.ClientTimeout(total=60)) as antwoord:
-            inhoud = await antwoord.json(content_type=None)
             if antwoord.status >= 400:
-                raise SefFout(antwoord.status, (inhoud or {}).get("code", "?"), (inhoud or {}).get("title", ""))
-            return inhoud
+                try:
+                    inhoud = await antwoord.json(content_type=None) or {}
+                except ValueError:  # bv. een HTML-foutpagina van de proxy bij een 502
+                    inhoud = {}
+                raise SefFout(antwoord.status, inhoud.get("code", "?"), inhoud.get("title", ""))
+            return await antwoord.json(content_type=None)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -94,7 +98,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Start de sensoren en (met meter en telwerken) de upload elk kwartier en elk uur."""
     conf = {**STANDAARD, **entry.data}
     client = SefClient(async_get_clientsession(hass), conf["url"], conf["sleutel"])
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"client": client, "conf": conf}
+    uploads: dict[str, dict] = {}
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"client": client, "conf": conf, "uploads": uploads}
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     telwerken = {k: conf[k] for k in KANALEN if k in conf}
@@ -103,54 +108,76 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("SEF: geen meter of telwerken ingesteld, enkel prijs- en waakhondsensoren")
         return True
     if telwerken:
-        kwartier = _taak(hass, "sef_p1", "P1-upload", lambda: _upload(hass, client, conf, telwerken))
+        kwartier = _taak(hass, uploads, "sef_p1", "P1-upload", lambda: _upload(hass, client, conf, telwerken))
         # Twee minuten na elk kwartier: de 5-minutenstatistiek van het laatste blok is dan klaar.
         entry.async_on_unload(async_track_time_change(hass, kwartier, minute=[2, 17, 32, 47], second=0))
         entry.async_on_unload(async_call_later(hass, 60, kwartier))
     if "gas" in conf:
-        # Eigen taak en melding: een fout aan de gaskant stopt de elektriciteit niet (ADR-0064 §6).
-        uur = _taak(hass, "sef_p1_gas", "P1-gasupload", lambda: _upload_gas(hass, client, conf))
+        # Eigen taak en Repair: een fout aan de gaskant stopt de elektriciteit niet (ADR-0064 §6).
+        uur = _taak(hass, uploads, "sef_p1_gas", "P1-gasupload", lambda: _upload_gas(hass, client, conf))
         entry.async_on_unload(async_track_time_change(hass, uur, minute=7, second=0))
         entry.async_on_unload(async_call_later(hass, 90, uur))
     if batterij:
         # Eigen taak en aanvragen: zonder batterijtoestemming in SEF (403) gaan de netkwartieren gewoon door.
-        batterijtaak = _taak(hass, "sef_batterij", "batterij-upload", lambda: _upload_batterij(hass, client, conf))
+        batterijtaak = _taak(hass, uploads, "sef_batterij", "batterij-upload",
+                             lambda: _upload_batterij(hass, client, conf))
         entry.async_on_unload(async_track_time_change(hass, batterijtaak, minute=[4, 19, 34, 49], second=0))
         entry.async_on_unload(async_call_later(hass, 120, batterijtaak))
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Sensoren weg; de tijdstriggers stopt `async_on_unload`."""
+    """Sensoren en Repairs weg; de tijdstriggers stopt `async_on_unload`."""
     if ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
+        for taak in TAKEN:
+            ir.async_delete_issue(hass, DOMAIN, taak)
     return ok
 
 
-def _taak(hass: HomeAssistant, melding: str, naam: str, upload):
-    """Een tijdsgebonden upload die nooit twee keer tegelijk loopt; fouten van
-    SEF of een telwerk worden een melding (`melding` als id), een
-    netwerkfout probeert het volgende venster opnieuw."""
+def tijdelijk(fout: SefFout) -> bool:
+    """Lost zichzelf op (SEF bezet, te veel aanvragen, time-out): geen Repair, enkel later opnieuw."""
+    return fout.status in (408, 429) or fout.status >= 500
+
+
+def _taak(hass: HomeAssistant, uploads: dict, taak_id: str, naam: str, upload):
+    """Een tijdsgebonden upload die nooit twee keer tegelijk loopt. Een fout die
+    de gebruiker moet oplossen (SEF weigert, telwerk zonder statistiek of met een onmogelijke waarde) wordt
+    een Repair met `taak_id` als id, die bij de volgende geslaagde upload
+    verdwijnt; een tijdelijke fout (netwerk, 5xx, 408, 429) enkel een
+    waarschuwing in het logboek, het volgende venster probeert opnieuw.
+    `uploads[naam]`: tijdstippen en foutcode voor het diagnosebestand."""
     bezig = False
+    status = uploads.setdefault(naam, {"laatste_poging": None, "laatste_succes": None, "fout": None})
+
+    def repair(sleutel: str, **plaatshouders: str) -> None:
+        ir.async_create_issue(hass, DOMAIN, taak_id, is_fixable=False, severity=ir.IssueSeverity.ERROR,
+                              translation_key=sleutel, translation_placeholders={"naam": naam, **plaatshouders})
 
     async def taak(_now: datetime | None = None) -> None:
         nonlocal bezig
         if bezig:  # een aanvulling van dagen kan langer duren dan een kwartier
             return
         bezig = True
+        status["laatste_poging"] = dt_util.utcnow().isoformat()
         try:
             await upload()
-            persistent_notification.async_dismiss(hass, melding)
+            status.update(laatste_succes=status["laatste_poging"], fout=None)
+            ir.async_delete_issue(hass, DOMAIN, taak_id)
         except SefFout as fout:
-            _LOGGER.error("SEF weigerde de %s: %s", naam, fout)
-            persistent_notification.async_create(hass, f"SEF weigerde de {naam} ({fout.code}): {fout.titel}",
-                                                 title="SEF", notification_id=melding)
+            status["fout"] = f"{fout.status} {fout.code}"
+            if tijdelijk(fout):
+                _LOGGER.warning("SEF tijdelijk niet beschikbaar, %s straks opnieuw: %s", naam, fout)
+            else:
+                _LOGGER.error("SEF weigerde de %s: %s", naam, fout)
+                repair("upload_geweigerd", code=fout.code, titel=fout.titel)
         except (aiohttp.ClientError, TimeoutError) as fout:
+            status["fout"] = "NETWERK"
             _LOGGER.warning("SEF niet bereikbaar, %s straks opnieuw: %s", naam, fout)
         except ValueError as fout:  # telwerkfout uit p1.py: niet stil doorgaan
+            status["fout"] = "TELWERK"
             _LOGGER.error("%s: %s", naam, fout)
-            persistent_notification.async_create(hass, f"{naam} gestopt: {fout}", title="SEF",
-                                                 notification_id=melding)
+            repair("telwerkfout", fout=str(fout))
         finally:
             bezig = False
 
@@ -188,7 +215,7 @@ async def _venster(client: SefClient, energie: str, stap: timedelta, grens) -> t
 async def _blokken(hass: HomeAssistant, entiteiten: set[str], vanaf: datetime, tot: datetime,
                    eenheden: dict | None = None) -> dict:
     """Per entiteit het verbruik per 5-minutenblok (begin -> `change`).
-    Een telwerk zonder statistiek telt niet stil als 0: ValueError (melding in
+    Een telwerk zonder statistiek telt niet stil als 0: ValueError (Repair in
     HA) als een ander telwerk in hetzelfde venster wel blokken heeft, of als er
     over een uur of meer geen enkel blok is. Een korter leeg venster is gewoon
     de recorder die nog niet bij is. `eenheden`: omrekening door de recorder

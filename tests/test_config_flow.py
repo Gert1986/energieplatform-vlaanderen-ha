@@ -2,8 +2,8 @@
 test_config_flow.py
 ~~~~~~~~~~~~~~~~~~~
 
-Instellen via de UI, de YAML-import en de sensoren na de setup, tegen een
-nep-SEF (`SefClient.vraag`). Vraagt `pytest-homeassistant-custom-component`.
+Instellen via de UI, de YAML-import, de sensoren na de setup, de Repairs van
+de uploads en het diagnosebestand, tegen een nep-SEF (`SefClient.vraag`). Vraagt `pytest-homeassistant-custom-component`.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -13,11 +13,14 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import patch
 
+import aiohttp
 import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 from homeassistant import config_entries  # noqa: E402
 from homeassistant.data_entry_flow import FlowResultType  # noqa: E402
+from homeassistant.helpers import entity_registry as er  # noqa: E402
+from homeassistant.helpers import issue_registry as ir
 
 import custom_components.sef as sef  # noqa: E402
 
@@ -170,23 +173,136 @@ async def test_yaml_import_maakt_en_werkt_bij(recorder_mock, enable_custom_integ
     await hass.async_block_till_done()
     (entry,) = hass.config_entries.async_entries(sef.DOMAIN)
     assert entry.data["tarief_1"] == "nacht" and "meter" not in entry.data  # de YAML vervangt, vult niet aan
+    r = await hass.config_entries.flow.async_init(  # B1: de YAML blijft de bron
+        sef.DOMAIN, context={"source": config_entries.SOURCE_RECONFIGURE, "entry_id": entry.entry_id})
+    assert r["type"] is FlowResultType.ABORT and r["reason"] == "yaml_beheerd"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_reconfigure_wisselt_telwerken_zonder_andere_entiteiten(recorder_mock, enable_custom_integrations, hass,
+                                                                       nep_sef):
+    """Sinds 0.17.0: telwerken of sleutel wijzigen zonder de integratie te verwijderen. Een leeggemaakt
+    telwerk verdwijnt, een lege sleutel houdt de huidige, en de entiteiten houden hun unique_id."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    entry = MockConfigEntry(domain=sef.DOMAIN, unique_id=sef.DOMAIN, title="SEF", source=config_entries.SOURCE_USER,
+                            data={"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False,
+                                  "meter": "abcd1234", "afname_1": "sensor.p1_afname_1"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    def entiteiten():
+        return {e.unique_id: e.entity_id for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)}
+    voor = entiteiten()
+
+    r = await entry.start_reconfigure_flow(hass)
+    assert r["step_id"] == "reconfigure"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"url": "https://x", "sleutel": "sef_fout"})
+    assert r["errors"] == {"base": "ongeldige_sleutel"} and entry.data["sleutel"] == "sef_goed"
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"url": "https://x"})
+    assert r["step_id"] == "meter"
+    suggesties = {str(k): k.description["suggested_value"] for k in r["data_schema"].schema
+                  if k.description and "suggested_value" in k.description}
+    assert (suggesties["meter"], suggesties["afname_1"]) == ("abcd1234", "sensor.p1_afname_1")
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"meter": "abcd1234",
+                                                                      "afname_2": "sensor.p1_afname_2"})
+    assert r["type"] is FlowResultType.ABORT and r["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
+    assert dict(entry.data) == {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False,
+                                "meter": "abcd1234", "afname_2": "sensor.p1_afname_2"}
+    assert entiteiten() == voor and hass.states.get("sensor.sef_afnameprijs").state == "0.350406532"
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_diagnose_zonder_geheimen_of_bedragen(recorder_mock, enable_custom_integrations, hass, nep_sef):
-    """Het diagnosebestand belandt vaak in een publiek issue: geen sleutel, meter-ID of bedrag erin."""
+    """Het diagnosebestand belandt vaak in een publiek issue: geen sleutel, meter-ID, bedrag, eigen adres of
+    entity-ID van een telwerk erin. Het volledige bestand, zodat een nieuw veld niet ongezien meekomt."""
+    from homeassistant.const import __version__ as HA_VERSIE
+    from homeassistant.loader import async_get_integration
+
     from custom_components.sef.diagnostics import async_get_config_entry_diagnostics
-    yaml = {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False, "meter": "abcd1234"}
+    yaml = {"url": "https://thuis.tail1234.ts.net", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False,
+            "meter": "abcd1234", "afname_1": "sensor.gert_p1_afname"}
     await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT}, data=yaml)
     await hass.async_block_till_done()
     (entry,) = hass.config_entries.async_entries(sef.DOMAIN)
     diag = await async_get_config_entry_diagnostics(hass, entry)
-    tekst = str(diag)
-    for geheim in ("sef_goed", "abcd1234", "0.350406532", "1873.41", "ENGIE"):
-        assert geheim not in tekst, geheim
-    assert diag["instellingen"]["sleutel"] == "**REDACTED**"
-    prijs = diag["opvragingen"]["SEF prijs"]
-    assert prijs["gelukt"] and prijs["kwartieren"] == 1 and "afname_nu" in prijs["velden"]
+    for geheim in ("sef_goed", "abcd1234", "0.350406532", "1873.41", "ENGIE", "tail1234", "gert"):
+        assert geheim not in str(diag), geheim
+    verborgen = "**REDACTED**"
+    versie = str((await async_get_integration(hass, sef.DOMAIN)).version)
+    assert diag == {
+        "versie": versie, "ha_versie": HA_VERSIE,
+        "instellingen": {"url": verborgen, "sleutel": verborgen, "tarief_1": "dag", "enkelvoudig": False,
+                         "meter": verborgen, "afname_1": verborgen},
+        "uploads": {"P1-upload": {"laatste_poging": None, "laatste_succes": None, "fout": None}},
+        "opvragingen": OPVRAGINGEN,
+    }
+
+    # Een netwerkfout noemt het adres ("Cannot connect to host …"): enkel het soort fout komt erin.
+    async def onbereikbaar(self, methode, pad, json=None):
+        raise aiohttp.ClientConnectionError("Cannot connect to host thuis.tail1234.ts.net:443")
+
+    prijs = hass.data[sef.DOMAIN][entry.entry_id]["coordinators"]["SEF prijs"]
+    with patch.object(sef.SefClient, "vraag", onbereikbaar):
+        await prijs.async_refresh()
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["opvragingen"]["SEF prijs"]["fout"] == "ClientConnectionError" and "tail1234" not in str(diag)
+
+
+def _velden(pad: str, interval_s: float) -> dict:
+    data = ANTWOORDEN[pad]
+    return {"gelukt": True, "fout": None, "interval_s": interval_s, "velden": sorted(data),
+            "kwartieren": len(data.get("kwartieren") or []), "waarschuwingen": data.get("waarschuwingen", [])}
+
+
+OPVRAGINGEN = {"SEF prijs": _velden("/mij/prijs", 900.0), "SEF waakhond": _velden("/mij/waakhond", 3600.0),
+               "SEF voorschot": _velden("/mij/voorschot", 3600.0)}
+
+
+async def test_repair_bij_een_weigering_weg_na_de_volgende_geslaagde_upload(hass):
+    """Sinds 0.16.0: wat de gebruiker moet oplossen (403, een onbekende 4xx-code, een telwerk zonder
+    statistiek) is een Repair; een tijdelijke fout (5xx, 429, netwerk) enkel het logboek."""
+    fouten = [sef.SefFout(403, "P1_GEEN_TOESTEMMING", "Zet de P1-stroom aan.")]
+
+    async def upload():
+        if fouten:
+            raise fouten.pop(0)
+
+    uploads = {}
+    taak = sef._taak(hass, uploads, "sef_p1", "P1-upload", upload)
+    register = ir.async_get(hass)
+    await taak()
+    issue = register.async_get_issue(sef.DOMAIN, "sef_p1")
+    assert (issue.translation_key, issue.translation_placeholders) == (
+        "upload_geweigerd", {"naam": "P1-upload", "code": "P1_GEEN_TOESTEMMING", "titel": "Zet de P1-stroom aan."})
+    assert uploads["P1-upload"]["fout"] == "403 P1_GEEN_TOESTEMMING" and uploads["P1-upload"]["laatste_succes"] is None
+
+    # Tijdelijk: geen nieuwe Repair, en een bestaande blijft tot het echt lukt.
+    for tijdelijk in (sef.SefFout(503, "?", ""), sef.SefFout(429, "TE_VEEL", "Te veel aanvragen."),
+                      aiohttp.ClientConnectionError()):
+        fouten.append(tijdelijk)
+        await taak()
+        assert register.async_get_issue(sef.DOMAIN, "sef_p1").translation_placeholders["code"] == "P1_GEEN_TOESTEMMING"
+    assert uploads["P1-upload"]["fout"] == "NETWERK"
+
+    await taak()
+    assert register.async_get_issue(sef.DOMAIN, "sef_p1") is None
+    assert uploads["P1-upload"]["fout"] is None
+    assert uploads["P1-upload"]["laatste_succes"] == uploads["P1-upload"]["laatste_poging"] is not None
+
+    fouten.append(sef.SefFout(503, "?", ""))
+    await taak()
+    assert register.async_get_issue(sef.DOMAIN, "sef_p1") is None
+
+    # Een code die de integratie nog niet kent, verdwijnt niet stil; een telwerkfout krijgt een eigen tekst.
+    fouten.append(sef.SefFout(422, "NIEUWE_CODE", "Iets nieuws."))
+    await taak()
+    assert register.async_get_issue(sef.DOMAIN, "sef_p1").translation_placeholders["code"] == "NIEUWE_CODE"
+    fouten.append(ValueError("geen 5-minutenstatistieken voor sensor.t1"))
+    await taak()
+    issue = register.async_get_issue(sef.DOMAIN, "sef_p1")
+    assert issue.translation_key == "telwerkfout" and "sensor.t1" in issue.translation_placeholders["fout"]
 
 
 async def test_prijs_springt_op_de_kwartiergrens(recorder_mock, enable_custom_integrations, hass, nep_sef, freezer):

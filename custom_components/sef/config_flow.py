@@ -4,9 +4,11 @@ config_flow.py
 
 Instellen via de UI: eerst adres en API-sleutel (nagekeken met
 `GET /mij/aansluitingen`), dan optioneel de P1-meter, zijn telwerken en die
-van de thuisbatterij. Een
-bestaande YAML-configuratie wordt bij het opstarten één keer ingelezen en
-blijft daarna de bron (een wijziging in de YAML werkt de ingave bij).
+van de thuisbatterij. Sinds 0.17.0 kan dat later opnieuw (*Opnieuw
+configureren*), zonder de integratie te verwijderen. Een bestaande
+YAML-configuratie wordt bij het opstarten ingelezen en blijft daarna de bron
+(een wijziging in de YAML werkt de ingave bij); zo'n ingave configureer je dus
+in de YAML, niet in de UI.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -16,13 +18,28 @@ from __future__ import annotations
 import aiohttp
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import SOURCE_IMPORT, SOURCE_RECONFIGURE, ConfigFlow, ConfigFlowResult
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from . import DOMAIN, METER_PATROON, STANDAARD_URL, SefClient, SefFout
 
 _TELWERK = selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+# Ingevulde waarden gaan als suggestie mee (`add_suggested_values_to_schema`), niet als `default`: een default
+# komt terug als je het veld leegmaakt, en dan kan een telwerk nooit weg.
+_METER = vol.Schema({
+    vol.Optional("meter"): str,
+    vol.Optional("afname_1"): _TELWERK,
+    vol.Optional("afname_2"): _TELWERK,
+    vol.Optional("injectie_1"): _TELWERK,
+    vol.Optional("injectie_2"): _TELWERK,
+    vol.Optional("tarief_1", default="dag"): selector.SelectSelector(
+        selector.SelectSelectorConfig(options=["dag", "nacht"], translation_key="tarief_1")),
+    vol.Optional("enkelvoudig", default=False): bool,
+    vol.Optional("gas"): _TELWERK,
+    vol.Optional("batterij_laden"): _TELWERK,      # ADR-0066: beide of geen
+    vol.Optional("batterij_ontladen"): _TELWERK,
+})
 
 
 class SefConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -62,23 +79,37 @@ class SefConfigFlow(ConfigFlow, domain=DOMAIN):
             elif bool(user_input.get("batterij_laden")) != bool(user_input.get("batterij_ontladen")):
                 fouten["base"] = "batterij_paar"
             else:
+                # Opnieuw opgebouwd uit adres, sleutel en dit formulier: een leeggemaakt telwerk verdwijnt.
                 data = {**self._data, **{k: v for k, v in user_input.items() if v not in ("", None)}}
                 if meter:
                     data["meter"] = meter
+                if self.source == SOURCE_RECONFIGURE:
+                    return self.async_update_reload_and_abort(self._get_reconfigure_entry(), data=data)
                 return self.async_create_entry(title="SEF", data=data)
-        return self.async_show_form(step_id="meter", errors=fouten, data_schema=vol.Schema({
-            vol.Optional("meter"): str,
-            vol.Optional("afname_1"): _TELWERK,
-            vol.Optional("afname_2"): _TELWERK,
-            vol.Optional("injectie_1"): _TELWERK,
-            vol.Optional("injectie_2"): _TELWERK,
-            vol.Optional("tarief_1", default="dag"): selector.SelectSelector(
-                selector.SelectSelectorConfig(options=["dag", "nacht"], translation_key="tarief_1")),
-            vol.Optional("enkelvoudig", default=False): bool,
-            vol.Optional("gas"): _TELWERK,
-            vol.Optional("batterij_laden"): _TELWERK,      # ADR-0066: beide of geen
-            vol.Optional("batterij_ontladen"): _TELWERK,
-        }))
+        if user_input is None and self.source == SOURCE_RECONFIGURE:
+            user_input = dict(self._get_reconfigure_entry().data)
+        return self.async_show_form(step_id="meter", errors=fouten,
+                                    data_schema=self.add_suggested_values_to_schema(_METER, user_input or {}))
+
+    async def async_step_reconfigure(self, user_input: dict | None = None) -> ConfigFlowResult:
+        """Adres, sleutel en daarna de meterstap opnieuw, met de huidige waarden ingevuld. Een lege sleutel
+        houdt de huidige (die staat nooit leesbaar in het formulier). Een ingave uit de YAML blijft door de
+        YAML beheerd (B1): geen tweede bron die de YAML bij de volgende start stil terugzet."""
+        entry = self._get_reconfigure_entry()
+        if entry.source == SOURCE_IMPORT:
+            return self.async_abort(reason="yaml_beheerd")
+        fouten: dict[str, str] = {}
+        if user_input is not None:
+            sleutel = user_input.get("sleutel") or entry.data["sleutel"]
+            fout = await self._controleer(user_input["url"], sleutel)
+            if fout is None:
+                self._data = {"url": user_input["url"], "sleutel": sleutel}
+                return await self.async_step_meter()
+            fouten["base"] = fout
+        schema = vol.Schema({vol.Required("url", default=STANDAARD_URL): str, vol.Optional("sleutel"): str})
+        vorige = {"url": (user_input or entry.data).get("url", STANDAARD_URL)}
+        return self.async_show_form(step_id="reconfigure", errors=fouten,
+                                    data_schema=self.add_suggested_values_to_schema(schema, vorige))
 
     async def async_step_import(self, import_data: dict) -> ConfigFlowResult:
         """De YAML (`sef:` in configuration.yaml): nieuw, of de bestaande ingave

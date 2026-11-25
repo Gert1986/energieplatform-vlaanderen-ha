@@ -24,6 +24,14 @@
           "batterij_laden": "Battery: energy charged (kWh)",
           "batterij_ontladen": "Battery: energy discharged (kWh)"
         }
+      },
+      "reconfigure": {
+        "title": "SEF: reconfigure",
+        "description": "Leave the key empty to keep the current one. The P1 meter and counters follow; clear a field to remove that counter.",
+        "data": {
+          "url": "SEF address",
+          "sleutel": "New API key (empty = keep current)"
+        }
       }
     },
     "error": {
@@ -35,7 +43,9 @@
       "batterij_paar": "Enter both battery counters (charged and discharged), or neither."
     },
     "abort": {
-      "already_configured": "SEF is already configured."
+      "already_configured": "SEF is already configured.",
+      "yaml_beheerd": "This entry comes from configuration.yaml. Change it there and restart Home Assistant.",
+      "reconfigure_successful": "SEF has been reconfigured."
     }
   },
   "selector": {
@@ -44,6 +54,16 @@
         "dag": "day (Belgian convention)",
         "nacht": "night"
       }
+    }
+  },
+  "issues": {
+    "upload_geweigerd": {
+      "title": "SEF refused the {naam}",
+      "description": "{titel}\n\nSEF code: `{code}`. The upload retries by itself; this issue disappears once it succeeds."
+    },
+    "telwerkfout": {
+      "title": "{naam} stopped: meter error",
+      "description": "{fout}\n\nThe upload retries by itself; this issue disappears once it succeeds."
     }
   }
 }

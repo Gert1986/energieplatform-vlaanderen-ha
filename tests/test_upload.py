@@ -12,6 +12,7 @@ zonder wordt hij overgeslagen.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -52,7 +53,6 @@ def statistiek(monkeypatch):
 
     monkeypatch.setattr(sef, "get_instance", lambda hass: Recorder())
     monkeypatch.setattr(sef.dt_util, "utcnow", lambda: NU)
-    monkeypatch.setattr(sef.persistent_notification, "async_dismiss", lambda hass, nid: None)
     return gevraagd
 
 
@@ -83,6 +83,29 @@ def test_niets_te_doen_en_te_oude_meting(statistiek):
     with pytest.raises(sef.SefFout) as fout:
         asyncio.run(sef._upload(None, NepClient(None), CONF, TELWERKEN))
     assert fout.value.code == "GEEN_FLUVIUS_DATA"
+
+
+def test_foutpagina_zonder_json_is_een_tijdelijke_sef_fout():
+    """Een 502 met een HTML-pagina van de proxy was een ValueError en dus een valse telwerkmelding."""
+    class Antwoord:
+        status = 502
+
+        async def json(self, content_type=None):
+            raise json.JSONDecodeError("geen JSON", "<html>", 0)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+    class Sessie:
+        def request(self, *_, **__):
+            return Antwoord()
+
+    with pytest.raises(sef.SefFout) as fout:
+        asyncio.run(sef.SefClient(Sessie(), "https://x", "sef_x").vraag("GET", "/mij/prijs"))
+    assert (fout.value.status, fout.value.code) == (502, "?") and sef.tijdelijk(fout.value)
 
 
 def test_configuratieschema():
@@ -117,7 +140,7 @@ def test_gasupload_stuurt_enkel_volledige_uren_in_m3(statistiek, monkeypatch):
 
 
 def test_gastelwerk_zonder_gasaansluiting_in_sef_zegt_wat_te_doen(statistiek):
-    """Een gastelwerk in HA zonder Fluvius-gasexport in SEF: een melding met de oplossing, geen '0 … verwacht één'."""
+    """Een gastelwerk in HA zonder Fluvius-gasexport in SEF: een Repair met de oplossing, geen '0 … verwacht één'."""
     class ZonderGas(NepClient):
         async def vraag(self, methode, pad, json=None):
             return {"aansluitingen": [{"id": 7, "energie": "elektriciteit", "laatste_meting": self.laatste}]}
@@ -137,7 +160,7 @@ def _recorder(monkeypatch, per_entiteit: dict):
 
 def test_gastelwerk_zonder_statistiek_stopt_met_melding(statistiek, monkeypatch):
     """Een gasentiteit zonder statistiek (bv. een oud of verkeerd entity-ID) stopte vroeger stil: geen POST,
-    geen melding. Nu een ValueError met de entiteit erin, die `_taak` als melding in HA toont."""
+    geen melding. Nu een ValueError met de entiteit erin, die `_taak` als Repair in HA toont."""
     _recorder(monkeypatch, {})
     client = NepClient("2026-10-06T07:45:00+00:00", "2026-10-06T06:00:00+00:00")
     with pytest.raises(ValueError, match="sensor.gas"):

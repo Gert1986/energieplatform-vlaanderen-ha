@@ -24,6 +24,14 @@
           "batterij_laden": "Batterij: geladen energie (kWh)",
           "batterij_ontladen": "Batterij: ontladen energie (kWh)"
         }
+      },
+      "reconfigure": {
+        "title": "SEF: opnieuw configureren",
+        "description": "Laat de sleutel leeg om de huidige te houden. Daarna volgen de P1-meter en de telwerken; maak een veld leeg om dat telwerk weg te halen.",
+        "data": {
+          "url": "Adres van SEF",
+          "sleutel": "Nieuwe API-sleutel (leeg = huidige houden)"
+        }
       }
     },
     "error": {
@@ -35,7 +43,9 @@
       "batterij_paar": "Geef beide batterijtelwerken op (geladen en ontladen), of geen van beide."
     },
     "abort": {
-      "already_configured": "SEF is al ingesteld."
+      "already_configured": "SEF is al ingesteld.",
+      "yaml_beheerd": "Deze ingave komt uit configuration.yaml. Pas ze daar aan en herstart Home Assistant.",
+      "reconfigure_successful": "SEF is opnieuw geconfigureerd."
     }
   },
   "selector": {
@@ -44,6 +54,16 @@
         "dag": "dag (Belgische afspraak)",
         "nacht": "nacht"
       }
+    }
+  },
+  "issues": {
+    "upload_geweigerd": {
+      "title": "SEF weigerde de {naam}",
+      "description": "{titel}\n\nCode van SEF: `{code}`. De upload probeert het vanzelf opnieuw; deze melding verdwijnt zodra het lukt."
+    },
+    "telwerkfout": {
+      "title": "{naam} gestopt: telwerkfout",
+      "description": "{fout}\n\nDe upload probeert het vanzelf opnieuw; deze melding verdwijnt zodra het lukt."
     }
   }
 }
