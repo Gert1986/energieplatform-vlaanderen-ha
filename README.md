@@ -198,6 +198,7 @@ in de YAML werkt die bij). In `secrets.yaml`: `sef_sleutel: sef_...`, en in `con
      injectie_2: sensor.p1_meter_energy_export_tariff_2
      tarief_1: dag                  # Belgische afspraak: 1.8.1/2.8.1 = dag. Omgekeerd? Zet nacht.
      # enkelvoudig: true            # enkel bij een enkelvoudige meter
+     vermogen: sensor.p1_meter_power  # optioneel: netvermogen (W) voor Peak Guard, blijft lokaal
      gas: sensor.gas_meter_gas     # optioneel: gastelwerk in m³ (HomeWizard: apparaat "Gas meter")
      # batterij_laden: sensor.venus_total_charging_energy        # optioneel: beide of geen
      # batterij_ontladen: sensor.venus_total_discharging_energy
@@ -321,6 +322,63 @@ series:
     name: Beurs (zelfde netkosten en btw)
     type: line
     data_generator: return entity.attributes.kwartieren.map(k => [new Date(k.start).getTime(), k.prijs]);
+```
+
+## Peak Guard: een nieuwe maandpiek zien aankomen
+
+Sinds 0.19.0, met de afnametelwerken (`afname_1`, `afname_2`). Elke minuut, lokaal: enkel de drempel en het
+capaciteitstarief komen uit SEF, en die blijven staan als SEF even onbereikbaar is. Peak Guard stuurt niets:
+het geeft signalen, de automatisering kies je zelf.
+
+| Entiteit | Wat |
+|---|---|
+| `sensor.sef_kwartiervermogen` | Gemiddelde afname van het lopende kwartier tot nu (kW), uit de telwerken. |
+| `sensor.sef_verwachte_kwartierpiek` | Het kwartiergemiddelde als het vermogen van nu aanhoudt tot het einde van het kwartier. |
+| `sensor.sef_piekruimte` | kW kwartiergemiddelde tot de drempel; negatief = erover. Geen ogenblikkelijk vermogen: met nog 5 van de 15 minuten te gaan is 1 kW ruimte zowat 3 kW extra voor de rest van het kwartier. |
+| `sensor.sef_kost_nieuwe_piek` | Wat de verwachte piek deze maand extra kost aan capaciteitstarief (EUR incl. btw); 0 onder de drempel. |
+| `binary_sensor.sef_piekrisico` | Aan als de verwachte piek boven de drempel uitkomt. Attributen `drempel`, `bron_drempel` (`maandpiek`, `lokaal`: een piek die SEF nog niet kent, of `ondergrens`) en `reden`. |
+
+- Geef bij de meter ook het **netvermogen** op (`vermogen`, bv. `sensor.p1_meter_power` van HomeWizard, W of kW).
+  Zonder rekent de integratie het vermogen uit het telwerk van de laatste minuut. Injectie telt als 0.
+- Na een herstart van Home Assistant is het lopende kwartier *onbekend*: de stand bij het begin ontbreekt. Ook
+  de lokaal geziene maandpiek (`bron_drempel: lokaal`) is dan vergeten; de maandpiek uit SEF blijft.
+- Is een telwerk onbeschikbaar, dan zijn alle piekentiteiten *niet beschikbaar*, nooit "piekrisico aan".
+- In de eerste minuten van een kwartier springt de verwachting mee met elk toestel dat aan- of uitgaat
+  (een waterkoker). Wacht in een automatisering daarom best een minuut (`for:`).
+
+```yaml
+automation:
+  - alias: SEF - laadpaal pauzeren bij piekrisico
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.sef_piekrisico
+        to: "on"
+        for: {minutes: 1}
+    condition:
+      - condition: state
+        entity_id: switch.laadpaal
+        state: "on"
+    action:
+      - service: switch.turn_off
+        target: {entity_id: switch.laadpaal}
+      - service: input_boolean.turn_on   # zelf aan te maken helper: enkel hervatten wat SEF pauzeerde
+        target: {entity_id: input_boolean.laadpaal_gepauzeerd_door_sef}
+  - alias: SEF - laadpaal hervatten na het kwartier
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.sef_piekrisico
+        from: "on"
+        to: "off"
+        for: {minutes: 2}
+    condition:
+      - condition: state
+        entity_id: input_boolean.laadpaal_gepauzeerd_door_sef
+        state: "on"
+    action:
+      - service: switch.turn_on
+        target: {entity_id: switch.laadpaal}
+      - service: input_boolean.turn_off
+        target: {entity_id: input_boolean.laadpaal_gepauzeerd_door_sef}
 ```
 
 ## Wat je moet weten

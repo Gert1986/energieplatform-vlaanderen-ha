@@ -222,7 +222,7 @@ async def test_diagnose_zonder_geheimen_of_bedragen(recorder_mock, enable_custom
 
     from custom_components.sef.diagnostics import async_get_config_entry_diagnostics
     yaml = {"url": "https://thuis.tail1234.ts.net", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False,
-            "meter": "abcd1234", "afname_1": "sensor.gert_p1_afname"}
+            "meter": "abcd1234", "afname_1": "sensor.gert_p1_afname", "vermogen": "sensor.gert_p1_vermogen"}
     await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT}, data=yaml)
     await hass.async_block_till_done()
     (entry,) = hass.config_entries.async_entries(sef.DOMAIN)
@@ -234,7 +234,7 @@ async def test_diagnose_zonder_geheimen_of_bedragen(recorder_mock, enable_custom
     assert diag == {
         "versie": versie, "ha_versie": HA_VERSIE,
         "instellingen": {"url": verborgen, "sleutel": verborgen, "tarief_1": "dag", "enkelvoudig": False,
-                         "meter": verborgen, "afname_1": verborgen},
+                         "meter": verborgen, "afname_1": verborgen, "vermogen": verborgen},
         "uploads": {"P1-upload": {"laatste_poging": None, "laatste_succes": None, "fout": None}},
         "opvragingen": OPVRAGINGEN,
     }
@@ -359,3 +359,48 @@ async def test_prijssignalen_springen_op_de_kwartiergrens(recorder_mock, enable_
         async_fire_time_changed(hass)
         await hass.async_block_till_done()
         assert hass.states.get("sensor.sef_goedkoopste_1u").state == "2026-10-14T10:15:00+00:00"  # loopt: blijft
+
+
+async def test_peak_guard_rekent_elke_minuut_en_is_onbeschikbaar_zonder_telwerk(recorder_mock,
+                                                                               enable_custom_integrations, hass,
+                                                                               nep_sef, freezer):
+    """Sinds 0.19.0: het kwartiervermogen uit het afnametelwerk, de verwachte piek met het netvermogen (W), de
+    drempel (hier de ondergrens: SEF heeft deze maand nog geen piek) en de kost. Onbeschikbaar telwerk: alle
+    piekentiteiten onbeschikbaar, nooit piekrisico aan."""
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    async def op(tijd: str) -> None:
+        freezer.move_to(tijd)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+    freezer.move_to("2026-10-14T09:58:00+00:00")
+    hass.states.async_set("sensor.p1_afname_1", "100", {"unit_of_measurement": "kWh"})
+    hass.states.async_set("sensor.p1_vermogen", "2000", {"unit_of_measurement": "W"})
+    yaml = {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False,
+            "afname_1": "sensor.p1_afname_1", "vermogen": "sensor.p1_vermogen"}
+    await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT}, data=yaml)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.sef_kwartiervermogen").state == "unknown"  # gestart midden in een kwartier
+
+    await op("2026-10-14T10:00:00+00:00")
+    hass.states.async_set("sensor.p1_afname_1", "100.25", {"unit_of_measurement": "kWh"})
+    await op("2026-10-14T10:05:00+00:00")
+    # HA vuurt een tijdtrigger tot 0,5 s na de minuut (ook in productie): bij benadering.
+    assert float(hass.states.get("sensor.sef_kwartiervermogen").state) == pytest.approx(3, abs=0.01)  # 0,25 kWh, 5 min
+    assert float(hass.states.get("sensor.sef_verwachte_kwartierpiek").state) == pytest.approx(2.333, abs=0.01)
+    assert hass.states.get("binary_sensor.sef_piekrisico").state == "off"
+
+    hass.states.async_set("sensor.p1_vermogen", "6000", {"unit_of_measurement": "W"})
+    await op("2026-10-14T10:05:30+00:00")  # geen minuut: niets herrekend
+    await op("2026-10-14T10:06:00+00:00")
+    risico = hass.states.get("binary_sensor.sef_piekrisico")
+    assert risico.state == "on" and (risico.attributes["drempel"], risico.attributes["bron_drempel"]) == (2.5, "ondergrens")
+    assert hass.states.get("sensor.sef_piekruimte").state.startswith("-")
+    assert float(hass.states.get("sensor.sef_kost_nieuwe_piek").state) > 0
+
+    hass.states.async_set("sensor.p1_afname_1", "unavailable")
+    await op("2026-10-14T10:07:00+00:00")
+    for entiteit in ("sensor.sef_kwartiervermogen", "sensor.sef_verwachte_kwartierpiek", "sensor.sef_piekruimte",
+                     "sensor.sef_kost_nieuwe_piek", "binary_sensor.sef_piekrisico"):
+        assert hass.states.get(entiteit).state == "unavailable", entiteit

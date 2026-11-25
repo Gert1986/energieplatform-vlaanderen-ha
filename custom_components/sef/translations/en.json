@@ -20,6 +20,7 @@
           "injectie_2": "Export tariff 2 (kWh)",
           "tarief_1": "Tariff 1 is",
           "enkelvoudig": "Single-rate meter",
+          "vermogen": "Grid power for Peak Guard (W or kW, optional)",
           "gas": "Gas meter (m³)",
           "batterij_laden": "Battery: energy charged (kWh)",
           "batterij_ontladen": "Battery: energy discharged (kWh)"

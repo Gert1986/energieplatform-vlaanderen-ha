@@ -165,6 +165,13 @@ blokkeert.
 
 ## 0.19.0: Peak Guard
 
+**Stand (2026-11-25):** gebouwd en getest (`test_piek.py`, `test_config_flow.py`, `test_prijs.py`,
+`test_upload.py`, `test_bestanden.py` groen), nog niet in Gerts HA, nog niet gecommit, niets op de website.
+Afwijkingen van het plan: de drempel neemt ook de hoogste kwartierpiek die de integratie zelf deze maand zag
+(`bron_drempel: lokaal`), want SEF kan achterlopen (P1-upload geweigerd, Fluvius-data van dagen terug).
+`doel_kw` zit in `drempel()`, maar er is nog geen instelling voor. Elke minuut herrekend (niet bij elke
+telwerkwijziging), in UTC. `vermogen` gaat niet naar SEF en is gemaskeerd in de diagnose.
+
 **Doel:** zien dat een nieuwe maandpiek dreigt vóór het kwartier om is, en wat die kost. Werkt zonder SEF
 (behalve de drempel en het tarief, die gecachet blijven).
 

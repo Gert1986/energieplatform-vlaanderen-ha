@@ -53,6 +53,7 @@ CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({
     vol.Optional("injectie_2"): cv.entity_id,
     vol.Optional("tarief_1", default="dag"): vol.In(["dag", "nacht"]),
     vol.Optional("enkelvoudig", default=False): cv.boolean,
+    vol.Optional("vermogen"): cv.entity_id,      # netvermogen (W of kW) voor Peak Guard; blijft lokaal
     vol.Optional("gas"): cv.entity_id,           # gastelwerk (m³, total_increasing): upload + gasprijssensor
     # Thuisbatterij (ADR-0066): AC-telwerken van geladen en ontladen energie (kWh of Wh, total_increasing); beide of geen.
     vol.Inclusive("batterij_laden", "batterij"): cv.entity_id,

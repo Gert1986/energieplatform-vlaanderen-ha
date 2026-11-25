@@ -19,6 +19,9 @@ Sinds 0.14.1 volgen ze het kwartier van de klok (`prijs.prijs_nu`); sinds 0.15.1
 ook op elke kwartiergrens weg (`_Kwartierklok`), anders zag HA de nieuwe prijs pas bij de volgende opvraging.
 Sinds 0.18.0 de prijssignalen, lokaal uit dezelfde kwartieren: de rang van het kwartier van nu en het begin
 van het goedkoopste blok van 1, 2 en 4 uur (de aan/uit-signalen staan in `binary_sensor.py`).
+Sinds 0.19.0 Peak Guard (`Piekwacht`, rekenwerk in `piek.py`): het vermogen van het lopende kwartier uit de
+afnametelwerken, de verwachte kwartierpiek, de ruimte tot de drempel en wat een nieuwe piek kost. Elke minuut,
+lokaal; enkel de drempel en het tarief komen uit de laatst gelukte opvraging bij SEF.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -26,13 +29,15 @@ van het goedkoopste blok van 1, 2 en 4 uur (de aan/uit-signalen staan in `binary
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from collections.abc import Callable
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 import aiohttp
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator, UpdateFailed
@@ -40,6 +45,8 @@ from homeassistant.util import dt as dt_util
 
 from . import DOMAIN, SefFout
 from .p1 import kwartier_nu
+from .piek import KWARTIER as PIEK_KWARTIER, drempel, kost_nieuwe_piek, kwartierstand, verwachte_piek, \
+    vermogen_uit_telwerk
 from .prijs import KWARTIER, getal as _getal, goedkoopste_venster, horizon, opbouw_attribuut, prijs_nu, rang
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,7 +94,143 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     for energie in ("elektriciteit", "gas") if "gas" in conf or gas_voorschot else ("elektriciteit",):
         sensoren += [SefKostMaand(voorschot, energie), SefJaarschatting(voorschot, energie),
                      SefVoorschotSaldo(voorschot, energie), SefKostSindsAfrekening(voorschot, energie)]
+    afname = [conf[k] for k in ("afname_1", "afname_2") if k in conf]
+    if afname:
+        wacht = gegevens["piekwacht"] = Piekwacht(hass, afname, conf.get("vermogen"), prijs)
+        wacht.start(entry)
+        sensoren += [SefPiekwachtSensor(wacht, *s) for s in PIEKSENSOREN]
     async_add_entities(sensoren)
+
+
+def _waarde(state: State | None) -> Decimal | None:
+    """Een telwerk (kWh) of vermogen (kW) als Decimal; Wh en W worden kWh en kW. None als de entiteit
+    ontbreekt, onbekend of onbeschikbaar is."""
+    try:
+        w = Decimal(state.state)
+    except (AttributeError, InvalidOperation):
+        return None
+    if not w.is_finite():
+        return None
+    return w / 1000 if state.attributes.get("unit_of_measurement") in ("Wh", "W") else w
+
+
+def _dec(waarde) -> Decimal | None:
+    return None if waarde is None else Decimal(str(waarde))
+
+
+class Piekwacht:
+    """Houdt de telwerkstand bij het begin van het kwartier en van de vorige minuut bij, en de hoogste
+    kwartierpiek die deze maand lokaal gezien is; rekent elke minuut de cijfers voor de piekentiteiten.
+    `cijfers` is None als een telwerk onbeschikbaar is: dan zijn alle piekentiteiten onbeschikbaar, nooit
+    `piekrisico = aan` op onbetrouwbare data. Na een herstart midden in een kwartier is dat kwartier onbekend.
+    # ponytail: eerste kwartier na herstart onbekend; begintoestand uit de recorder halen als dat stoort"""
+
+    def __init__(self, hass: HomeAssistant, telwerken: list[str], vermogen: str | None,
+                 prijs: DataUpdateCoordinator) -> None:
+        self._hass, self._telwerken, self._vermogen, self._prijs = hass, telwerken, vermogen, prijs
+        self._begin: tuple[datetime, Decimal | None] | None = None   # (kwartierbegin, stand of None)
+        self._vorige: tuple[datetime, Decimal] | None = None
+        self._lokaal: tuple[str, Decimal] | None = None               # (maand, hoogste kwartier-kW)
+        self.cijfers: dict | None = None
+        self.luisteraars: list[Callable[[], None]] = []
+
+    def start(self, entry: ConfigEntry) -> None:
+        entry.async_on_unload(async_track_time_change(self._hass, self._tik, second=0))
+        self._tik(dt_util.now())
+
+    def _stand(self) -> Decimal | None:
+        standen = [_waarde(self._hass.states.get(e)) for e in self._telwerken]
+        return None if None in standen else sum(standen, Decimal(0))
+
+    @callback
+    def _tik(self, nu: datetime) -> None:
+        nu = dt_util.as_utc(nu)  # in UTC: twee tijden in dezelfde ZoneInfo trekt Python af in kloktijd (zomer/winter)
+        stand = self._stand()
+        kwartier = nu.replace(minute=nu.minute - nu.minute % 15, second=0, microsecond=0)
+        if self._begin is None or self._begin[0] != kwartier:
+            vorig = self._begin
+            if vorig is not None and vorig[1] is not None and stand is not None and vorig[0] + PIEK_KWARTIER == kwartier:
+                gemiddeld = kwartierstand(vorig[1], stand, vorig[0], kwartier)
+                maand = f"{dt_util.as_local(vorig[0]):%Y-%m}"
+                if gemiddeld is not None and (self._lokaal is None or self._lokaal[0] != maand
+                                              or gemiddeld > self._lokaal[1]):
+                    self._lokaal = (maand, gemiddeld)
+            op_de_grens = nu - kwartier < timedelta(seconds=30)
+            self._begin = (kwartier, stand if op_de_grens else None)
+            self._vorige = (nu, stand) if stand is not None else None
+            if op_de_grens and stand is not None and self.cijfers is not None:
+                return  # de cijfers van het afgelopen kwartier blijven nog een minuut staan
+        self.cijfers = None if stand is None else self._reken(nu, stand)
+        self._vorige = None if stand is None else (nu, stand)
+        for luisteraar in self.luisteraars:
+            luisteraar()
+
+    def _reken(self, nu: datetime, stand: Decimal) -> dict:
+        begin, begin_stand = self._begin
+        gemiddeld = kwartierstand(begin_stand, stand, begin, nu)
+        vermogen = _waarde(self._hass.states.get(self._vermogen)) if self._vermogen else None
+        if vermogen is None:  # geen of onbeschikbare vermogenssensor: uit het telwerk van de laatste minuut
+            vermogen = vermogen_uit_telwerk(self._vorige, (nu, stand))
+        verwacht = verwachte_piek(gemiddeld, vermogen, nu - begin)
+        cap = (self._prijs.data or {}).get("capaciteit") or {}  # de laatst gelukte opvraging, ook als SEF nu faalt
+        maand = f"{dt_util.as_local(nu):%Y-%m}"
+        sef_piek = next((_dec(m.get("piek_kw")) for m in cap.get("maanden", []) if m.get("maand") == maand), None)
+        lokaal = self._lokaal[1] if self._lokaal and self._lokaal[0] == maand else None
+        grens, bron = drempel(sef_piek, lokaal, _dec(cap.get("ondergrens_kw")))
+        risico = None if grens is None or verwacht is None else verwacht > grens
+        return {"kwartiervermogen": gemiddeld, "verwacht": verwacht, "drempel": grens, "bron": bron,
+                "ruimte": None if risico is None else grens - verwacht, "risico": risico,
+                "kost": kost_nieuwe_piek(verwacht, grens, _dec(cap.get("tarief_eur_kw_jaar"))),
+                "reden": None if risico is None else (
+                    f"verwacht {verwacht:.2f} kW {'boven' if risico else 'onder'} de drempel {grens:.2f} kW ({bron})")}
+
+
+class _Piekwachter:
+    """Basis voor de piekentiteiten: geen CoordinatorEntity (die is onbeschikbaar zodra SEF faalt), maar
+    een luisteraar op `Piekwacht`."""
+
+    _attr_should_poll = False
+
+    def __init__(self, wacht: Piekwacht) -> None:
+        self._wacht = wacht
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._wacht.luisteraars.append(self.async_write_ha_state)
+        self.async_on_remove(lambda: self._wacht.luisteraars.remove(self.async_write_ha_state))
+
+    @property
+    def available(self) -> bool:
+        return self._wacht.cijfers is not None
+
+
+# (naam, sleutel in Piekwacht.cijfers, eenheid, device_class)
+PIEKSENSOREN = [("kwartiervermogen", "kwartiervermogen", "kW", SensorDeviceClass.POWER),
+                ("verwachte kwartierpiek", "verwacht", "kW", SensorDeviceClass.POWER),
+                ("piekruimte", "ruimte", "kW", SensorDeviceClass.POWER),
+                ("kost nieuwe piek", "kost", "EUR", SensorDeviceClass.MONETARY)]
+
+
+class SefPiekwachtSensor(_Piekwachter, SensorEntity):
+    """Kwartiervermogen (gemiddelde tot nu), verwachte kwartierpiek, piekruimte (kW tot de drempel, negatief =
+    erover) en de kost van de nieuwe piek (EUR incl. btw deze maand, 0 onder de drempel)."""
+
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, wacht: Piekwacht, naam: str, sleutel: str, eenheid: str, klasse: SensorDeviceClass) -> None:
+        super().__init__(wacht)
+        self._sleutel = sleutel
+        self._attr_name = f"SEF {naam}"
+        self._attr_unique_id = "sef_" + naam.replace(" ", "_")
+        self._attr_native_unit_of_measurement = eenheid
+        self._attr_device_class = klasse
+        if klasse is SensorDeviceClass.POWER:
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> float | None:
+        w = (self._wacht.cijfers or {}).get(self._sleutel)
+        return None if w is None else round(float(w), 3)
 
 
 class _Kwartierklok:

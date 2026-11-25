@@ -36,6 +36,7 @@ _METER = vol.Schema({
     vol.Optional("tarief_1", default="dag"): selector.SelectSelector(
         selector.SelectSelectorConfig(options=["dag", "nacht"], translation_key="tarief_1")),
     vol.Optional("enkelvoudig", default=False): bool,
+    vol.Optional("vermogen"): _TELWERK,            # Peak Guard, gaat niet naar SEF
     vol.Optional("gas"): _TELWERK,
     vol.Optional("batterij_laden"): _TELWERK,      # ADR-0066: beide of geen
     vol.Optional("batterij_ontladen"): _TELWERK,
