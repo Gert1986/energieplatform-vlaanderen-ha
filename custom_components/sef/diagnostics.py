@@ -22,7 +22,7 @@ from homeassistant.loader import async_get_integration
 from . import DOMAIN, STANDAARD_URL, SefFout
 from .p1 import KANALEN
 
-GEHEIM = {"sleutel", "meter", *KANALEN, "vermogen", "gas", "batterij_laden", "batterij_ontladen"}
+GEHEIM = {"sleutel", "meter", *KANALEN, "vermogen", "gas", "batterij_laden", "batterij_ontladen", "batterij_soc"}
 
 
 def samenvatting(data: dict | None) -> dict:

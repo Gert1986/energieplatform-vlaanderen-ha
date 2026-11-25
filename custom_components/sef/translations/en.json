@@ -23,7 +23,11 @@
           "vermogen": "Grid power for Peak Guard (W or kW, optional)",
           "gas": "Gas meter (m³)",
           "batterij_laden": "Battery: energy charged (kWh)",
-          "batterij_ontladen": "Battery: energy discharged (kWh)"
+          "batterij_ontladen": "Battery: energy discharged (kWh)",
+          "batterij_soc": "Planner: battery state of charge (%)",
+          "batterij_capaciteit": "Planner: usable capacity",
+          "batterij_vermogen": "Planner: maximum charging power",
+          "batterij_max_soc": "Planner: charge up to (default 100 %)"
         }
       },
       "reconfigure": {
@@ -41,7 +45,8 @@
       "onverwacht": "Unexpected answer from SEF; see the log.",
       "meter_ongeldig": "Letters and digits only, 4 to 64 characters.",
       "meter_nodig": "A meter ID is required with meters.",
-      "batterij_paar": "Enter both battery counters (charged and discharged), or neither."
+      "batterij_paar": "Enter both battery counters (charged and discharged), or neither.",
+      "planner_drie": "For the battery planner: enter state of charge, capacity and charging power, all three or none."
     },
     "abort": {
       "already_configured": "SEF is already configured.",

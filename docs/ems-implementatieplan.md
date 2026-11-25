@@ -40,7 +40,7 @@ Elk punt heeft een voorstel waarmee het plan verder kan. Gert beslist vóór de 
 
 ## 0.16.0: Repairs en diagnostics
 
-**Stand (2026-11-25):** gebouwd, tests groen, nog niet gecommit. In Gerts HA (2026.11.3) getest: diagnose correct gemaskeerd, de drie uploads lukken, Repair bij `P1_GEEN_TOESTEMMING` verschijnt om 11:02 en verdwijnt na de upload van 11:32. Nog open: een dag draaien zonder valse Repair.
+**Stand (2026-11-25):** vrijgegeven in 0.17.0 (samen met reconfigure). In Gerts HA (2026.11.3) getest: diagnose correct gemaskeerd, de drie uploads lukken, Repair bij `P1_GEEN_TOESTEMMING` verschijnt om 11:02 en verdwijnt na de upload van 11:32. Nog open: een dag draaien zonder valse Repair.
 
 **Doel:** een fout die de gebruiker kan oplossen, verschijnt als Repair. Een tijdelijke fout niet. Het
 diagnosebestand toont ook de uploads.
@@ -86,7 +86,7 @@ draait een dag zonder valse Repair.
 
 ## 0.17.0: Reconfigure
 
-**Stand (2026-11-25):** gebouwd en getest (`test_config_flow.py` groen), nog niet in Gerts HA. Op Gerts vraag in
+**Stand (2026-11-25):** vrijgegeven als v0.17.0 (2026-11-25), samen met 0.16.0. Op Gerts vraag in
 dezelfde werkmap als 0.16.0 gebouwd: één commit en één release 0.17.0 met beide. B1 volgens het voorstel
 gebouwd, nog te bevestigen. De sleutel staat nooit leesbaar in het formulier: leeg laten houdt de huidige.
 Open bij B1: een ingave die ooit uit de YAML kwam en waarvan het `sef:`-blok weg is, blijft `import` en kan
@@ -116,7 +116,7 @@ Tests in `test_config_flow.py`:
 ## 0.18.0: Prijssignalen
 
 **Stand (2026-11-25):** gebouwd en getest (`test_prijs.py`, `test_config_flow.py`, `test_upload.py` groen),
-nog niet in Gerts HA, nog niet gecommit, nog niets op de website (0.17.0 is vrijgegeven op 2026-11-25). B2 en B3 volgens het voorstel, nog te bevestigen. `rang` kent enkel de afname (geen
+vrijgegeven als v0.18.0 (2026-11-25), nog niets op de website. B2 en B3 volgens het voorstel, nog te bevestigen. `rang` kent enkel de afname (geen
 `richting`: geen entiteit gebruikt injectie). `goedkoopste_venster` kijkt vanaf het kwartier van nu; de
 sensor onthoudt het lopende blok, zodat het niet verschuift zolang het loopt (na een herstart vergeten). `binary_sensor` start na `sensor`
 (leent de coördinator). S1 (maandgrens) blijft open.
@@ -170,7 +170,7 @@ blokkeert.
 ## 0.19.0: Peak Guard
 
 **Stand (2026-11-25):** gebouwd en getest (`test_piek.py`, `test_config_flow.py`, `test_prijs.py`,
-`test_upload.py`, `test_bestanden.py` groen), nog niet in Gerts HA, nog niet gecommit, niets op de website.
+`test_upload.py`, `test_bestanden.py` groen), vrijgegeven als v0.19.0 (2026-11-25), niets op de website.
 Afwijkingen van het plan: de drempel neemt ook de hoogste kwartierpiek die de integratie zelf deze maand zag
 (`bron_drempel: lokaal`), want SEF kan achterlopen (P1-upload geweigerd, Fluvius-data van dagen terug).
 `doel_kw` zit in `drempel()`, maar er is nog geen instelling voor. Elke minuut herrekend (niet bij elke
@@ -220,6 +220,26 @@ Tests in `test_piek.py` (nieuw):
 ## Daarna: planner en modi (ADR-0001 aanvaard: lokaal)
 
 ADR-0001 en B5 zijn beslist (2026-11-25). Wat volgt:
+
+**Stand 0.20.0 (2026-11-25):** gebouwd en getest (`test_planner.py`, `test_config_flow.py` en de andere
+geraakte testbestanden groen), nog niet in Gerts HA, nog niet gecommit, niets op de website. Afwijkingen van
+de punten hieronder:
+
+- Gert heeft geen laadpaal: de eerste planner is een **batterijplanner** (laden van het net of zelfverbruik),
+  geen EV-planner. Geen ontladen naar het net: de injectieprijs is te laag.
+- Modi: enkel `monitor` en `proefdraai`. `advies` en `dry-run` zijn hetzelfde zolang er niets gestuurd wordt.
+  `automatisch` en `switch.sef_pauze` komen met de sturing.
+- Logboek op het dashboard: `sensor.sef_beslissing` zonder eenheid (het logboek van HA toont dan elke wissel)
+  en het event `sef_beslissing`. De tekst wisselt enkel bij een andere actie of reden; prijzen en vermogen
+  staan in de attributen.
+- Zonder gekende piekruimte geen laadadvies. Zon: wat gisteren geïnjecteerd werd, blijft vrij (naïef; blokkeert
+  `automatisch` tot de proefdraai op zonnige dagen nagekeken is). Zon = wat gisteren geïnjecteerd en in de
+  batterij geladen werd; klopt enkel zolang niets de batterij van het net laadt (ook het eigen schema van de
+  batterij niet). Rendement vast 0,85.
+- Laden enkel vóór het duurste kwartier van de komende 24 uur (één piek per dag; ochtend- en avondpiek apart
+  als de proefdraai dat vraagt).
+- **Blokkerend voor `automatisch`:** zodra de planner echt laadt, zit dat laadvermogen in de verwachte piek
+  van Peak Guard en zakt `piekruimte` naar 0. De sturing moet haar eigen laadvermogen eerst terug optellen.
 
 1. `select.sef_modus` (monitor, advies, dry-run, automatisch). Standaard monitor. Automatisch enkel na een
    expliciete keuze. `switch.sef_pauze` met een duur.

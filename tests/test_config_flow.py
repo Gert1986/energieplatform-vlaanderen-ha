@@ -107,6 +107,9 @@ async def test_ui_flow_controleert_sleutel_en_meter(recorder_mock, enable_custom
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"meter": "abcd1234",
                                                                       "batterij_laden": "sensor.batterij_in"})
     assert r["errors"] == {"base": "batterij_paar"}  # ADR-0066: beide batterijtelwerken of geen
+    r = await hass.config_entries.flow.async_configure(r["flow_id"], {"meter": "abcd1234",
+                                                                      "batterij_soc": "sensor.batterij_soc"})
+    assert r["errors"] == {"base": "planner_drie"}  # 0.20.0: laadtoestand, capaciteit en vermogen samen
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
     assert r["type"] is FlowResultType.CREATE_ENTRY
     assert {k: r["data"][k] for k in ("url", "sleutel", "tarief_1", "enkelvoudig")} == \
@@ -222,7 +225,8 @@ async def test_diagnose_zonder_geheimen_of_bedragen(recorder_mock, enable_custom
 
     from custom_components.sef.diagnostics import async_get_config_entry_diagnostics
     yaml = {"url": "https://thuis.tail1234.ts.net", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False,
-            "meter": "abcd1234", "afname_1": "sensor.gert_p1_afname", "vermogen": "sensor.gert_p1_vermogen"}
+            "meter": "abcd1234", "afname_1": "sensor.gert_p1_afname", "vermogen": "sensor.gert_p1_vermogen",
+            "batterij_soc": "sensor.gert_batterij_soc", "batterij_capaciteit": 5.12, "batterij_vermogen": 2500}
     await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT}, data=yaml)
     await hass.async_block_till_done()
     (entry,) = hass.config_entries.async_entries(sef.DOMAIN)
@@ -234,7 +238,8 @@ async def test_diagnose_zonder_geheimen_of_bedragen(recorder_mock, enable_custom
     assert diag == {
         "versie": versie, "ha_versie": HA_VERSIE,
         "instellingen": {"url": verborgen, "sleutel": verborgen, "tarief_1": "dag", "enkelvoudig": False,
-                         "meter": verborgen, "afname_1": verborgen, "vermogen": verborgen},
+                         "meter": verborgen, "afname_1": verborgen, "vermogen": verborgen,
+                         "batterij_soc": verborgen, "batterij_capaciteit": 5.12, "batterij_vermogen": 2500},
         "uploads": {"P1-upload": {"laatste_poging": None, "laatste_succes": None, "fout": None}},
         "opvragingen": OPVRAGINGEN,
     }
@@ -404,3 +409,59 @@ async def test_peak_guard_rekent_elke_minuut_en_is_onbeschikbaar_zonder_telwerk(
     for entiteit in ("sensor.sef_kwartiervermogen", "sensor.sef_verwachte_kwartierpiek", "sensor.sef_piekruimte",
                      "sensor.sef_kost_nieuwe_piek", "binary_sensor.sef_piekrisico"):
         assert hass.states.get(entiteit).state == "unavailable", entiteit
+
+
+async def test_batterijplanner_proefdraai_met_beknopt_logboek(recorder_mock, enable_custom_integrations, hass,
+                                                             nep_sef, freezer):
+    """Sinds 0.20.0: de modus blijft na een herstart, de beslissing heeft geen eenheid (dus in het logboek) en
+    wisselt enkel van tekst als de actie of reden wisselt. Er wordt niets gestuurd."""
+    from homeassistant.core import State
+    from pytest_homeassistant_custom_component.common import (async_capture_events, async_fire_time_changed,
+                                                              mock_restore_cache)
+
+    async def op(tijd: str) -> None:
+        freezer.move_to(tijd)
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+    freezer.move_to("2026-10-14T09:58:00+00:00")
+    mock_restore_cache(hass, [State("select.sef_modus", "proefdraai")])
+    hass.states.async_set("sensor.p1_afname_1", "100", {"unit_of_measurement": "kWh"})
+    hass.states.async_set("sensor.batterij_soc", "90", {"unit_of_measurement": "%"})
+    oproepen = async_capture_events(hass, "call_service")
+    gebeurd = async_capture_events(hass, "sef_beslissing")
+    afname = ["0.05", "0.40", "0.30", "0.30"]  # 10:00 tot 11:00 UTC
+    prijs = ANTWOORDEN["/mij/prijs"] | {"kwartieren": [
+        {"tijdstip": f"2026-10-14T10:{15 * i:02d}:00+00:00", "afname": a, "injectie": "0.04"} for i, a in enumerate(afname)]}
+    with patch.dict(ANTWOORDEN, {"/mij/prijs": prijs}):
+        yaml = {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False,
+                "afname_1": "sensor.p1_afname_1", "batterij_soc": "sensor.batterij_soc", "batterij_capaciteit": 5,
+                "batterij_vermogen": 2500}
+        await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT},
+                                                  data=yaml)
+        await hass.async_block_till_done()
+        assert hass.states.get("select.sef_modus").state == "proefdraai"  # hersteld
+        beslissing = hass.states.get("sensor.sef_beslissing")
+        assert beslissing.state == "Zelfverbruik: geen prijs"  # 09:45 heeft geen prijs
+        assert "unit_of_measurement" not in beslissing.attributes and "state_class" not in beslissing.attributes
+
+        await op("2026-10-14T10:00:00+00:00")
+        hass.states.async_set("sensor.p1_afname_1", "100.0083", {"unit_of_measurement": "kWh"})  # ±0,5 kW
+        await op("2026-10-14T10:01:00+00:00")
+        beslissing = hass.states.get("sensor.sef_beslissing")
+        assert beslissing.state == "Zou laden: goedkoop kwartier"
+        assert 1900 < beslissing.attributes["vermogen_w"] < 2100  # piekruimte tot de ondergrens 2,5 kW
+        gewijzigd = beslissing.last_changed
+
+        hass.states.async_set("sensor.p1_afname_1", "100.03", {"unit_of_measurement": "kWh"})
+        await op("2026-10-14T10:02:00+00:00")
+        beslissing = hass.states.get("sensor.sef_beslissing")
+        assert beslissing.state == "Zou laden: goedkoop kwartier" and beslissing.last_changed == gewijzigd
+        assert beslissing.attributes["vermogen_w"] < 1900  # meer afname, minder ruimte: enkel het attribuut
+
+        await hass.services.async_call("select", "select_option",
+                                       {"entity_id": "select.sef_modus", "option": "monitor"}, blocking=True)
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.sef_beslissing").state == "Monitor"
+    assert [e.data["reden"] for e in gebeurd] == ["geen prijs", "goedkoop kwartier", "monitor"]
+    assert {e.data["domain"] for e in oproepen} == {"select"}  # enkel de eigen modus: niets gestuurd

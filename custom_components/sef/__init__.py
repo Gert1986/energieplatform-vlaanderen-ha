@@ -36,7 +36,7 @@ from .p1 import (BLOK, KANALEN, KWARTIER, UUR, batterijrijen, gasrijen, in_stukk
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "sef"
-PLATFORMS = ["sensor", "binary_sensor"]  # in die volgorde: binary_sensor leent de prijscoördinator
+PLATFORMS = ["sensor", "binary_sensor", "select"]  # in die volgorde: de andere lenen wat sensor maakt
 MAX_DAGEN_TERUG = 10  # zoals SEF en de bewaartermijn van de korte-termijnstatistieken
 STANDAARD_URL = "https://energieplatform-vlaanderen.be"
 METER_PATROON = re.compile(r"[0-9A-Za-z]{4,64}")
@@ -54,6 +54,11 @@ CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({
     vol.Optional("tarief_1", default="dag"): vol.In(["dag", "nacht"]),
     vol.Optional("enkelvoudig", default=False): cv.boolean,
     vol.Optional("vermogen"): cv.entity_id,      # netvermogen (W of kW) voor Peak Guard; blijft lokaal
+    # Batterijplanner (ADR-0001, proefdraai): laadtoestand (%), capaciteit (kWh) en laadvermogen (W); alle drie of geen.
+    vol.Inclusive("batterij_soc", "planner"): cv.entity_id,
+    vol.Inclusive("batterij_capaciteit", "planner"): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=100)),
+    vol.Inclusive("batterij_vermogen", "planner"): vol.All(vol.Coerce(float), vol.Range(min=50, max=25000)),
+    vol.Optional("batterij_max_soc"): vol.All(vol.Coerce(float), vol.Range(min=10, max=100)),
     vol.Optional("gas"): cv.entity_id,           # gastelwerk (m³, total_increasing): upload + gasprijssensor
     # Thuisbatterij (ADR-0066): AC-telwerken van geladen en ontladen energie (kWh of Wh, total_increasing); beide of geen.
     vol.Inclusive("batterij_laden", "batterij"): cv.entity_id,

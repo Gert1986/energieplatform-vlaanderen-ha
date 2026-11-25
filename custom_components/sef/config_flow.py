@@ -40,6 +40,14 @@ _METER = vol.Schema({
     vol.Optional("gas"): _TELWERK,
     vol.Optional("batterij_laden"): _TELWERK,      # ADR-0066: beide of geen
     vol.Optional("batterij_ontladen"): _TELWERK,
+    # Batterijplanner (proefdraai): alle drie of geen; maximale laadtoestand optioneel (standaard 100 %).
+    vol.Optional("batterij_soc"): _TELWERK,
+    vol.Optional("batterij_capaciteit"): selector.NumberSelector(selector.NumberSelectorConfig(
+        min=0.1, max=100, step=0.01, unit_of_measurement="kWh", mode=selector.NumberSelectorMode.BOX)),
+    vol.Optional("batterij_vermogen"): selector.NumberSelector(selector.NumberSelectorConfig(
+        min=50, max=25000, step=50, unit_of_measurement="W", mode=selector.NumberSelectorMode.BOX)),
+    vol.Optional("batterij_max_soc"): selector.NumberSelector(selector.NumberSelectorConfig(
+        min=10, max=100, step=1, unit_of_measurement="%", mode=selector.NumberSelectorMode.BOX)),
 })
 
 
@@ -79,6 +87,8 @@ class SefConfigFlow(ConfigFlow, domain=DOMAIN):
                 fouten["meter"] = "meter_nodig"
             elif bool(user_input.get("batterij_laden")) != bool(user_input.get("batterij_ontladen")):
                 fouten["base"] = "batterij_paar"
+            elif len({bool(user_input.get(k)) for k in ("batterij_soc", "batterij_capaciteit", "batterij_vermogen")}) > 1:
+                fouten["base"] = "planner_drie"
             else:
                 # Opnieuw opgebouwd uit adres, sleutel en dit formulier: een leeggemaakt telwerk verdwijnt.
                 data = {**self._data, **{k: v for k, v in user_input.items() if v not in ("", None)}}

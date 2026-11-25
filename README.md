@@ -199,6 +199,10 @@ in de YAML werkt die bij). In `secrets.yaml`: `sef_sleutel: sef_...`, en in `con
      tarief_1: dag                  # Belgische afspraak: 1.8.1/2.8.1 = dag. Omgekeerd? Zet nacht.
      # enkelvoudig: true            # enkel bij een enkelvoudige meter
      vermogen: sensor.p1_meter_power  # optioneel: netvermogen (W) voor Peak Guard, blijft lokaal
+     # batterij_soc: sensor.marstek_venus_modbus_batterij_soc   # optioneel, batterijplanner: alle drie of geen
+     # batterij_capaciteit: 5.12      # bruikbare kWh
+     # batterij_vermogen: 2500        # maximaal laadvermogen in W
+     # batterij_max_soc: 100          # optioneel: laden tot (de eigen grens van je batterij)
      gas: sensor.gas_meter_gas     # optioneel: gastelwerk in m³ (HomeWizard: apparaat "Gas meter")
      # batterij_laden: sensor.venus_total_charging_energy        # optioneel: beide of geen
      # batterij_ontladen: sensor.venus_total_discharging_energy
@@ -380,6 +384,45 @@ automation:
       - service: input_boolean.turn_off
         target: {entity_id: input_boolean.laadpaal_gepauzeerd_door_sef}
 ```
+
+## Batterijplanner (proefdraai)
+
+Sinds 0.20.0. De integratie rekent lokaal uit wanneer je thuisbatterij beter van het net laadt, en zegt dat in
+`sensor.sef_beslissing`. **Ze stuurt niets**: dit is een proefdraai om na te kijken of de beslissingen kloppen.
+Automatisch sturen komt pas later, en enkel voor een batterij die getest is.
+
+Instellen bij de meter (*Opnieuw configureren*): de laadtoestand (%-sensor van je batterij), de bruikbare
+capaciteit (kWh) en het maximale laadvermogen (W), en eventueel tot hoeveel % ze laadt.
+
+| Entiteit | Wat |
+|---|---|
+| `select.sef_modus` | `monitor` (standaard): niets plannen. `proefdraai`: plannen en tonen. Blijft na een herstart. |
+| `sensor.sef_beslissing` | Kort wat hij nu zou doen, bv. *Zou laden: goedkoop kwartier* of *Zelfverbruik: later goedkoper*. Attributen: `vermogen_w`, `detail` (prijzen en tijden). |
+
+Hoe hij beslist, per kwartier:
+
+- **Zou laden** als dit kwartier bij de goedkoopste hoort die nodig zijn om de batterij te vullen, en de
+  prijs na 15 % verlies nog onder het gemiddelde van de duurste kwartieren erna ligt.
+- Het laadvermogen blijft binnen de **piekruimte** van Peak Guard: laden maakt geen nieuwe maandpiek. Zonder
+  afnametelwerk of na een herstart is die ruimte onbekend, en dan zegt hij nooit laden.
+- **Zon:** wat je gisteren injecteerde, houdt hij vrij voor zonne-overschot. Dat is een ruwe schatting: op
+  een zonnige dag na een grijze kan hij te veel van het net laden. Kijk dat in de proefdraai na.
+- Anders **zelfverbruik**: de batterij doet wat ze zelf doet (bv. nul op de meter).
+
+Een logboek op je dashboard (*Kaart toevoegen → Logboek*), beknopt: een regel per wissel, met het tijdstip.
+
+```yaml
+type: logbook
+title: SEF
+hours_to_show: 24
+entities:
+  - sensor.sef_beslissing
+  - select.sef_modus
+  - binary_sensor.sef_piekrisico
+```
+
+Elke wissel is ook het event `sef_beslissing` (met `modus`, `actie`, `reden` en `detail`) voor je eigen
+automatiseringen.
 
 ## Wat je moet weten
 

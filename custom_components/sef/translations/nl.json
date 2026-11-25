@@ -23,7 +23,11 @@
           "vermogen": "Netvermogen voor Peak Guard (W of kW, optioneel)",
           "gas": "Gastelwerk (m³)",
           "batterij_laden": "Batterij: geladen energie (kWh)",
-          "batterij_ontladen": "Batterij: ontladen energie (kWh)"
+          "batterij_ontladen": "Batterij: ontladen energie (kWh)",
+          "batterij_soc": "Planner: laadtoestand batterij (%)",
+          "batterij_capaciteit": "Planner: bruikbare capaciteit",
+          "batterij_vermogen": "Planner: maximaal laadvermogen",
+          "batterij_max_soc": "Planner: laden tot (standaard 100 %)"
         }
       },
       "reconfigure": {
@@ -41,7 +45,8 @@
       "onverwacht": "Onverwacht antwoord van SEF; zie het logboek.",
       "meter_ongeldig": "Enkel letters en cijfers, 4 tot 64 tekens.",
       "meter_nodig": "Met telwerken is een meter-ID nodig.",
-      "batterij_paar": "Geef beide batterijtelwerken op (geladen en ontladen), of geen van beide."
+      "batterij_paar": "Geef beide batterijtelwerken op (geladen en ontladen), of geen van beide.",
+      "planner_drie": "Voor de batterijplanner: geef laadtoestand, capaciteit en laadvermogen alle drie op, of geen."
     },
     "abort": {
       "already_configured": "SEF is al ingesteld.",

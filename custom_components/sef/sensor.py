@@ -22,6 +22,8 @@ van het goedkoopste blok van 1, 2 en 4 uur (de aan/uit-signalen staan in `binary
 Sinds 0.19.0 Peak Guard (`Piekwacht`, rekenwerk in `piek.py`): het vermogen van het lopende kwartier uit de
 afnametelwerken, de verwachte kwartierpiek, de ruimte tot de drempel en wat een nieuwe piek kost. Elke minuut,
 lokaal; enkel de drempel en het tarief komen uit de laatst gelukte opvraging bij SEF.
+Sinds 0.20.0 de batterijplanner (`Batterijplanner`, beslissing in `planner.py`, ADR-0001): met `select.sef_modus`
+op proefdraai zegt `sensor.sef_beslissing` wat hij zou doen. Er wordt niets gestuurd.
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -30,11 +32,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import aiohttp
 
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.statistics import statistics_during_period
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, State, callback
@@ -45,6 +49,7 @@ from homeassistant.util import dt as dt_util
 
 from . import DOMAIN, SefFout
 from .p1 import kwartier_nu
+from .planner import beslis
 from .piek import KWARTIER as PIEK_KWARTIER, drempel, kost_nieuwe_piek, kwartierstand, verwachte_piek, \
     vermogen_uit_telwerk
 from .prijs import KWARTIER, getal as _getal, goedkoopste_venster, horizon, opbouw_attribuut, prijs_nu, rang
@@ -99,6 +104,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         wacht = gegevens["piekwacht"] = Piekwacht(hass, afname, conf.get("vermogen"), prijs)
         wacht.start(entry)
         sensoren += [SefPiekwachtSensor(wacht, *s) for s in PIEKSENSOREN]
+    if "batterij_soc" in conf:
+        planner = gegevens["planner"] = Batterijplanner(hass, conf, prijs, gegevens.get("piekwacht"))
+        planner.start(entry)
+        sensoren.append(SefBeslissing(planner))
     async_add_entities(sensoren)
 
 
@@ -231,6 +240,99 @@ class SefPiekwachtSensor(_Piekwachter, SensorEntity):
     def native_value(self) -> float | None:
         w = (self._wacht.cijfers or {}).get(self._sleutel)
         return None if w is None else round(float(w), 3)
+
+
+class Batterijplanner:
+    """Elke minuut (na Peak Guard, of op de kwartiergrens zonder) en bij elke moduswissel: wat de batterij nu
+    zou doen. In `monitor` rekent hij niet. `beslissing` wisselt enkel van tekst als actie of reden wisselt,
+    zodat het logboek beknopt blijft; dan ook het event `sef_beslissing`. Stuurt niets (proefdraai)."""
+
+    def __init__(self, hass: HomeAssistant, conf: dict, prijs: DataUpdateCoordinator, wacht: Piekwacht | None) -> None:
+        self._hass, self._conf, self._prijs, self._wacht = hass, conf, prijs, wacht
+        self.modus = "monitor"
+        self.beslissing: dict = {"tekst": "Monitor", "actie": None, "reden": "monitor", "vermogen_kw": Decimal(0),
+                                 "detail": ""}
+        self.luisteraars: list[Callable[[], None]] = []
+        self._zon: tuple[date, Decimal] | None = None
+
+    def start(self, entry: ConfigEntry) -> None:
+        if self._wacht is not None:
+            self._wacht.luisteraars.append(self._tik)
+        else:
+            entry.async_on_unload(async_track_time_change(self._hass, lambda _nu: self._tik(),
+                                                          minute=[0, 15, 30, 45], second=0))
+
+    @callback
+    def _tik(self) -> None:
+        if self.modus != "monitor":
+            self._hass.async_create_task(self.beslis())
+
+    async def _zon_kwh(self) -> Decimal:
+        """Wat gisteren geïnjecteerd én in de batterij geladen werd (kWh): zoveel ruimte blijft vrij voor
+        zonne-overschot. Met enkel de injectie zag een zonnige dag die net de batterij vulde eruit als 0.
+        # ponytail: gisteren = morgen, en enkel juist zolang niets de batterij van het net laadt (eigen schema
+        # van de batterij, later `automatisch`); een PV-voorspelling als die er komt"""
+        vandaag = dt_util.now().date()
+        if self._zon is not None and self._zon[0] == vandaag:
+            return self._zon[1]
+        telwerken = {self._conf[k] for k in ("injectie_1", "injectie_2", "batterij_laden") if k in self._conf}
+        kwh = Decimal(0)
+        if telwerken:
+            begin = dt_util.start_of_local_day() - timedelta(days=1)
+            ruw = await get_instance(self._hass).async_add_executor_job(
+                statistics_during_period, self._hass, begin, begin + timedelta(days=1), telwerken, "hour",
+                {"energy": "kWh"}, {"change"})
+            kwh = sum((Decimal(str(r["change"])) for rijen in ruw.values() for r in rijen if r.get("change")),
+                      Decimal(0))
+        self._zon = (vandaag, kwh)
+        return kwh
+
+    async def beslis(self) -> None:
+        if self.modus == "monitor":
+            nieuw = {"tekst": "Monitor", "actie": None, "reden": "monitor", "vermogen_kw": Decimal(0), "detail": ""}
+        else:
+            c = self._conf
+            nieuw = beslis((self._prijs.data or {}).get("kwartieren") or [], dt_util.now(),
+                           soc_pct=_waarde(self._hass.states.get(c["batterij_soc"])),
+                           capaciteit_kwh=_dec(c["batterij_capaciteit"]),
+                           laadvermogen_kw=_dec(c["batterij_vermogen"]) / 1000,
+                           max_soc_pct=_dec(c.get("batterij_max_soc", 100)),
+                           piekruimte_kw=(self._wacht.cijfers or {}).get("ruimte") if self._wacht else None,
+                           zon_kwh=await self._zon_kwh())
+            nieuw["tekst"] = ("Zou laden" if nieuw["actie"] == "laden" else "Zelfverbruik") + f": {nieuw['reden']}"
+        if nieuw["tekst"] != self.beslissing["tekst"]:
+            self._hass.bus.async_fire("sef_beslissing", {"modus": self.modus, "actie": nieuw["actie"],
+                                                         "reden": nieuw["reden"], "detail": nieuw["detail"]})
+        self.beslissing = nieuw
+        for luisteraar in self.luisteraars:
+            luisteraar()
+
+
+class SefBeslissing(SensorEntity):
+    """Wat de batterijplanner nu zou doen, als korte tekst. Geen eenheid of state_class: zo toont het logboek
+    elke wissel met het tijdstip (een logboekkaart op het dashboard). Prijzen en vermogen in de attributen."""
+
+    _attr_name = "SEF beslissing"
+    _attr_unique_id = "sef_beslissing"
+    _attr_should_poll = False
+
+    def __init__(self, planner: Batterijplanner) -> None:
+        self._planner = planner
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._planner.luisteraars.append(self.async_write_ha_state)
+        self.async_on_remove(lambda: self._planner.luisteraars.remove(self.async_write_ha_state))
+
+    @property
+    def native_value(self) -> str:
+        return self._planner.beslissing["tekst"]
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        b = self._planner.beslissing
+        return {"modus": self._planner.modus, "actie": b["actie"], "vermogen_w": int(b["vermogen_kw"] * 1000),
+                "detail": b["detail"]}
 
 
 class _Kwartierklok:
