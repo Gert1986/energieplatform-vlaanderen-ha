@@ -111,6 +111,12 @@ Tests in `test_config_flow.py`:
 
 ## 0.18.0: Prijssignalen
 
+**Stand (2026-11-25):** gebouwd en getest (`test_prijs.py`, `test_config_flow.py`, `test_upload.py` groen),
+nog niet in Gerts HA, nog niet gecommit, nog niets op de website (0.17.0 is vrijgegeven op 2026-11-25). B2 en B3 volgens het voorstel, nog te bevestigen. `rang` kent enkel de afname (geen
+`richting`: geen entiteit gebruikt injectie). `goedkoopste_venster` kijkt vanaf het kwartier van nu; de
+sensor onthoudt het lopende blok, zodat het niet verschuift zolang het loopt (na een herstart vergeten). `binary_sensor` start na `sensor`
+(leent de coördinator). S1 (maandgrens) blijft open.
+
 **Doel:** automatiseringen zonder YAML-lussen over `kwartieren`. Volledig lokaal, uit de bestaande
 `/mij/prijs`.
 

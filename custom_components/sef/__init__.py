@@ -36,7 +36,7 @@ from .p1 import (BLOK, KANALEN, KWARTIER, UUR, batterijrijen, gasrijen, in_stukk
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "sef"
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "binary_sensor"]  # in die volgorde: binary_sensor leent de prijscoördinator
 MAX_DAGEN_TERUG = 10  # zoals SEF en de bewaartermijn van de korte-termijnstatistieken
 STANDAARD_URL = "https://energieplatform-vlaanderen.be"
 METER_PATROON = re.compile(r"[0-9A-Za-z]{4,64}")
@@ -100,7 +100,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     client = SefClient(async_get_clientsession(hass), conf["url"], conf["sleutel"])
     uploads: dict[str, dict] = {}
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"client": client, "conf": conf, "uploads": uploads}
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    for platform in PLATFORMS:  # na elkaar, niet tegelijk: zie PLATFORMS
+        await hass.config_entries.async_forward_entry_setups(entry, [platform])
 
     telwerken = {k: conf[k] for k in KANALEN if k in conf}
     batterij = "batterij_laden" in conf and "batterij_ontladen" in conf

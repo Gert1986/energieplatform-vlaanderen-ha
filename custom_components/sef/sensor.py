@@ -17,6 +17,8 @@ heffingen en btw als je contract) en de maandpieken met hun kost aan capaciteits
 Sinds 0.14.0 dragen de prijssensoren het attribuut `opbouw`: afname in energie, net, heffingen en btw; injectie in beurs en marge.
 Sinds 0.14.1 volgen ze het kwartier van de klok (`prijs.prijs_nu`); sinds 0.15.1 schrijven ze hun toestand
 ook op elke kwartiergrens weg (`_Kwartierklok`), anders zag HA de nieuwe prijs pas bij de volgende opvraging.
+Sinds 0.18.0 de prijssignalen, lokaal uit dezelfde kwartieren: de rang van het kwartier van nu en het begin
+van het goedkoopste blok van 1, 2 en 4 uur (de aan/uit-signalen staan in `binary_sensor.py`).
 
 :copyright: (c) 2026 Gert Botte
 :license: MIT, zie LICENSE
@@ -38,7 +40,7 @@ from homeassistant.util import dt as dt_util
 
 from . import DOMAIN, SefFout
 from .p1 import kwartier_nu
-from .prijs import getal as _getal, opbouw_attribuut, prijs_nu
+from .prijs import KWARTIER, getal as _getal, goedkoopste_venster, horizon, opbouw_attribuut, prijs_nu, rang
 
 _LOGGER = logging.getLogger(__name__)
 # Een prijs wijzigt hoogstens per kwartier (dynamisch) of per dag/nachtwissel.
@@ -70,7 +72,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     prijs = await coordinator("SEF prijs", "/mij/prijs", INTERVAL)
     sensoren: list[SensorEntity] = [SefPrijs(prijs, "afname"), SefPrijs(prijs, "injectie"),
                                     SefContract(prijs, "elektriciteit"), SefSpotprijs(prijs), SefBeursAllin(prijs),
-                                    SefMaandpiek(prijs), SefHoogstePiek(prijs), SefCapaciteitstarief(prijs)]
+                                    SefMaandpiek(prijs), SefHoogstePiek(prijs), SefCapaciteitstarief(prijs),
+                                    SefPrijsrang(prijs), *(SefGoedkoopste(prijs, uren) for uren in (1, 2, 4))]
     if "gas" in conf:
         gasprijs = await coordinator("SEF gasprijs", "/mij/gasprijs", GAS_INTERVAL)
         sensoren += [SefGasprijs(gasprijs), SefContract(gasprijs, "gas")]
@@ -183,6 +186,60 @@ class SefBeursAllin(_Kwartierklok, CoordinatorEntity, SensorEntity):
         return {"kwartieren": [{"start": k["tijdstip"], "prijs": float(k["beurs_allin"])}
                                for k in (self.coordinator.data or {}).get("kwartieren") or []
                                if k.get("beurs_allin") is not None]}
+
+
+class SefPrijsrang(_Kwartierklok, CoordinatorEntity, SensorEntity):
+    """0 tot 100: hoeveel procent van de gekende kwartieren vanaf nu strikt goedkoper is dan dit kwartier.
+    0 = nu is het goedkoopst. Bij dag/nacht zijn alle nachtkwartieren 0; `prijsniveaus` toont dan 2."""
+
+    _attr_name = "SEF prijsrang"
+    _attr_unique_id = "sef_prijsrang"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> int | None:
+        return rang((self.coordinator.data or {}).get("kwartieren") or [], dt_util.now())
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        h = horizon((self.coordinator.data or {}).get("kwartieren") or [], dt_util.now())
+        return {"horizon_tot": (h[-1][0] + KWARTIER).isoformat() if h else None,
+                "prijsniveaus": len({prijs for _, prijs in h})}
+
+
+class SefGoedkoopste(_Kwartierklok, CoordinatorEntity, SensorEntity):
+    """Het begin van het goedkoopste aaneengesloten blok van 1, 2 of 4 uur in de gekende prijzen. Eens
+    begonnen blijft het staan tot het voorbij is (geen verschuiving midden in je vaatwasser); onbekend als
+    er minder prijzen gekend zijn dan het blok lang is."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: DataUpdateCoordinator, uren: int) -> None:
+        super().__init__(coordinator)
+        self._aantal = 4 * uren
+        self._attr_name = f"SEF goedkoopste {uren}u"
+        self._attr_unique_id = f"sef_goedkoopste_{uren}u"
+
+    _lopend: dict | None = None
+
+    def _venster(self) -> dict | None:
+        # ponytail: na een herstart midden in een blok is het lopende blok vergeten en volgt het volgende
+        nu = dt_util.now()
+        if self._lopend is None or not self._lopend["begin"] <= nu < self._lopend["einde"]:
+            self._lopend = goedkoopste_venster((self.coordinator.data or {}).get("kwartieren") or [], nu, self._aantal)
+        return self._lopend
+
+    @property
+    def native_value(self):
+        v = self._venster()
+        return None if v is None else v["begin"]
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        v = self._venster()
+        return {"einde": None if v is None else v["einde"].isoformat(),
+                "gemiddelde_prijs": None if v is None else float(v["gemiddelde"])}
 
 
 class _SefPiek(CoordinatorEntity, SensorEntity):

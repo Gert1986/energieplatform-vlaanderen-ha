@@ -324,3 +324,38 @@ async def test_prijs_springt_op_de_kwartiergrens(recorder_mock, enable_custom_in
         await hass.async_block_till_done()
         assert hass.states.get("sensor.sef_afnameprijs").state == "0.4"
         assert hass.states.get("sensor.sef_spotprijs").state == "120.0"
+
+
+async def test_prijssignalen_springen_op_de_kwartiergrens(recorder_mock, enable_custom_integrations, hass, nep_sef,
+                                                         freezer):
+    """Sinds 0.18.0: rang, goedkoop/duur nu en het goedkoopste uur, lokaal uit de kwartieren."""
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+    freezer.move_to("2026-10-14T10:05:00+00:00")
+    afname = ["0.20", "0.40", "0.30", "0.50", "0.10"]  # 10:00 tot 11:15 UTC
+    prijs = ANTWOORDEN["/mij/prijs"] | {"kwartieren": [
+        {"tijdstip": f"2026-10-14T{10 + i // 4}:{15 * (i % 4):02d}:00+00:00", "afname": a, "injectie": "0.04"}
+        for i, a in enumerate(afname)]}
+    with patch.dict(ANTWOORDEN, {"/mij/prijs": prijs}):
+        yaml = {"url": "https://x", "sleutel": "sef_goed", "tarief_1": "dag", "enkelvoudig": False}
+        await hass.config_entries.flow.async_init(sef.DOMAIN, context={"source": config_entries.SOURCE_IMPORT},
+                                                  data=yaml)
+        await hass.async_block_till_done()
+        rang = hass.states.get("sensor.sef_prijsrang")
+        assert (rang.state, rang.attributes["prijsniveaus"], rang.attributes["horizon_tot"]) == \
+            ("20", 5, "2026-10-14T11:15:00+00:00")  # enkel 0.10 is goedkoper: 1 van 5
+        assert hass.states.get("binary_sensor.sef_goedkoop_nu").state == "on"
+        assert hass.states.get("binary_sensor.sef_duur_nu").state == "off"
+        uur = hass.states.get("sensor.sef_goedkoopste_1u")  # 10:15-11:15 gemiddeld 0.325, 10:00-11:00 0.35
+        assert (uur.state, uur.attributes["einde"], uur.attributes["gemiddelde_prijs"]) == \
+            ("2026-10-14T10:15:00+00:00", "2026-10-14T11:15:00+00:00", 0.325)
+        assert hass.states.get("sensor.sef_goedkoopste_2u").state == "unknown"  # te weinig prijzen
+
+        freezer.move_to("2026-10-14T10:15:00+00:00")
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.sef_prijsrang").state == "50"  # 0.40: 0.30 en 0.10 goedkoper, van 4
+        assert hass.states.get("binary_sensor.sef_goedkoop_nu").state == "off"
+        freezer.move_to("2026-10-14T10:30:00+00:00")
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.sef_goedkoopste_1u").state == "2026-10-14T10:15:00+00:00"  # loopt: blijft

@@ -252,29 +252,26 @@ automation:
 
 ## De vaatwasser in de goedkoopste uren
 
-Een sensor die *aan* staat in de 12 goedkoopste kwartieren (3 uur) van vandaag, uit het attribuut
-`kwartieren` van je eigen all-in prijs. Werkt bij elk contract: dynamisch volgt het de beurs, dag/nacht kiest
-de nacht, bij een enkelvoudig vast tarief is elk kwartier even goedkoop en staat ze altijd aan.
+Sinds 0.18.0 rekent de integratie dat zelf uit, lokaal uit de prijzen die ze al heeft:
+
+| Entiteit | Wat |
+|---|---|
+| `sensor.sef_goedkoopste_1u`, `_2u`, `_4u` | Begin van het goedkoopste aaneengesloten blok van 1, 2 of 4 uur in de gekende prijzen; attributen `einde` en `gemiddelde_prijs`. Eens begonnen blijft het staan tot het voorbij is. *Onbekend* als er minder prijzen gekend zijn dan het blok lang is. |
+| `sensor.sef_prijsrang` | 0 tot 100: hoeveel procent van de gekende kwartieren vanaf nu goedkoper is. 0 = nu is het goedkoopst. Attributen `horizon_tot` (tot wanneer de prijzen gekend zijn) en `prijsniveaus`. |
+| `binary_sensor.sef_goedkoop_nu` | Aan bij een prijsrang van hoogstens 25. |
+| `binary_sensor.sef_duur_nu` | Aan bij een prijsrang van minstens 75. |
+
+Werkt bij elk contract: dynamisch volgt het de beurs, dag/nacht kiest de nacht (alle nachtkwartieren hebben
+rang 0, `prijsniveaus` is dan 2). De prijzen van morgen komen er rond 13 uur bij; tot dan kijkt alles enkel
+naar vandaag. SEF geeft geen prijzen voorbij het einde van de maand: op de laatste dag stopt de horizon om
+middernacht.
 
 ```yaml
-template:
-  - binary_sensor:
-      - name: SEF goedkope uren
-        unique_id: sef_goedkope_uren
-        state: >
-          {% set vandaag = now().strftime('%Y-%m-%d') %}
-          {% set prijzen = state_attr('sensor.sef_afnameprijs', 'kwartieren') | default([], true)
-               | selectattr('start', 'match', vandaag) | map(attribute='prijs')
-               | reject('none') | sort | list %}
-          {% set nu = states('sensor.sef_afnameprijs') %}
-          {{ is_number(nu) and prijzen | count >= 12 and nu | float <= prijzen[11] }}
-
 automation:
-  - alias: SEF - vaatwasser in de goedkope uren
+  - alias: SEF - vaatwasser in de goedkoopste 2 uur
     trigger:
-      - platform: state
-        entity_id: binary_sensor.sef_goedkope_uren
-        to: "on"
+      - platform: time
+        at: sensor.sef_goedkoopste_2u
     condition:   # zelf aan te maken helper: aan = gevuld en klaar om te starten
       - condition: state
         entity_id: input_boolean.vaatwasser_klaar
@@ -286,7 +283,9 @@ automation:
         target: {entity_id: input_boolean.vaatwasser_klaar}
 ```
 
-Meer of minder uren: vervang `12` en `prijzen[11]` (bv. 8 kwartieren = 2 uur: `8` en `prijzen[7]`).
+Een kortere of langere cyclus: `sensor.sef_goedkoopste_1u` of `_4u`. Zet je `vaatwasser_klaar` pas aan als
+het blok al begonnen is, dan is het tijdstip voorbij en wacht de vaatwasser op het volgende blok (misschien
+morgen). Na een herstart van Home Assistant midden in een blok toont de sensor het volgende blok.
 
 ## Energy-dashboard
 
