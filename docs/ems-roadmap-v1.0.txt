@@ -1,0 +1,1295 @@
+ENERGIEPLATFORM VLAANDEREN
+HOME ASSISTANT EMS - ONTWIKKELROADMAP
+Versie 1.0 - 24 november 2026
+
+======================================================================
+1. DOEL VAN DIT DOCUMENT
+======================================================================
+
+Dit document beschrijft hoe de bestaande Home Assistant-integratie van
+Energieplatform Vlaanderen kan evolueren van een meet- en prijsintegratie naar
+een transparant, lokaal veilig en economisch gestuurd energiemanagementsysteem
+(EMS).
+
+De ontwikkelrichting is:
+
+METEN -> VOORSPELLEN -> PLANNEN -> STUREN -> METEN WAT HET OPLEVERT
+
+De bestaande basis blijft behouden:
+- all-in afname- en injectieprijs per kwartier;
+- Belgische day-ahead/spotprijs;
+- contract- en tariefinformatie;
+- maandpiek en capaciteitstarief;
+- voorschot- en kostenopvolging;
+- P1-upload per kwartier;
+- gasmeting;
+- batterij laad- en ontlaadenergie per kwartier;
+- koppeling met het dossier op Energieplatform Vlaanderen.
+
+De volgende ontwikkelfase maakt van deze informatie bruikbare beslissingen en,
+pas daarna, gecontroleerde sturing van batterij, EV, boiler en warmtepomp.
+
+
+======================================================================
+2. PRODUCTDOEL
+======================================================================
+
+Home Assistant wordt de lokale uitvoeringslaag.
+Energieplatform Vlaanderen wordt de economische reken- en planningslaag.
+
+HOME ASSISTANT
+- kent actuele lokale sensoren en apparaten;
+- bewaakt harde technische en comfortgrenzen;
+- kan blijven functioneren wanneer internet of Energieplatform uitvalt;
+- voert tijdelijke, expliciet begrensde opdrachten uit;
+- verzamelt gemeten resultaten.
+
+ENERGIEPLATFORM VLAANDEREN
+- kent contract en werkelijke all-in energieprijs;
+- kent netkosten, capaciteitstarief en injectievergoeding;
+- levert marktprijzen en prijsvooruitblik;
+- berekent economische planning;
+- vergelijkt scenario's;
+- meet achteraf de financiële impact.
+
+Hoofdprincipe:
+
+Geen black-boxsturing. Elke beslissing moet technisch begrensd, tijdelijk,
+uitlegbaar en achteraf controleerbaar zijn.
+
+
+======================================================================
+3. STRATEGISCHE DOELEN
+======================================================================
+
+DOEL 1 - VAN LOSSE SENSOREN NAAR BESLISSINGSSIGNALEN
+
+Gebruikers mogen niet zelf arrays van kwartierprijzen moeten verwerken.
+De integratie levert direct bruikbare signalen zoals:
+- goedkoop/duur nu;
+- relatieve prijsrang;
+- goedkoopste venster van 1, 2 of 4 uur;
+- laadvenster voor EV;
+- piekrisico.
+
+
+DOEL 2 - CAPACITEITSTARIEF ACTIEF BEHEREN
+
+Niet alleen rapporteren wat de maandpiek was, maar lokaal voorspellen of het
+lopende kwartier een nieuwe piek dreigt te veroorzaken en indien gewenst
+flexibele lasten beperken.
+
+
+DOEL 3 - BATTERIJ ECONOMISCH STUREN
+
+Sturing gebeurt niet uitsluitend op spotprijs, maar op de prijs die voor de
+gebruiker werkelijk relevant is:
+- all-in afnameprijs;
+- injectievergoeding;
+- rendement;
+- SOC;
+- verwacht PV-overschot;
+- piekdoel;
+- optioneel degradatiekost.
+
+
+DOEL 4 - FLEXIBELE LASTEN PLANNEN
+
+EV, boiler en later warmtepomp krijgen een doel in plaats van een simpele
+prijsdrempel.
+
+Voorbeeld EV:
+- vertrek: 07:30;
+- minimaal gewenste SOC: 80%;
+- lokaal beschikbaar laadvermogen: 7,4 kW;
+- vereiste energie: 27,5 kWh;
+- planner kiest de goedkoopste geldige kwartieren, rekening houdend met
+  eventuele vermogens- en piekbeperkingen.
+
+
+DOEL 5 - EEN DAGELIJKS ENERGIEPLAN MAKEN
+
+Zodra voldoende prijsinformatie voor morgen beschikbaar is, genereert het
+systeem een plan voor de komende uren met geplande acties voor batterij, EV en
+later thermische lasten.
+
+
+DOEL 6 - BESPARING ACHTERAF METEN
+
+Niet alleen voorspellen wat een EMS zou besparen. Op basis van P1- en
+batterijkwartieren wordt achteraf berekend wat daadwerkelijk gebeurde en,
+waar methodologisch verantwoord, hoeveel een uitgevoerde planning financieel
+heeft opgeleverd.
+
+
+DOEL 7 - VEILIGE FAILSAFE-ARCHITECTUUR
+
+Serveroptimalisatie mag nooit een lokaal apparaat onbeperkt besturen.
+Alle opdrachten hebben een geldigheidsduur. Lokale harde grenzen blijven altijd
+leidend.
+
+
+DOEL 8 - ONDERHOUD EN SUPPORT PROFESSIONALISEREN
+
+Voor sturing wordt toegevoegd, worden configuratie, diagnostics en herstel van
+problemen verbeterd met Home Assistant-conforme mechanismen.
+
+
+======================================================================
+4. ARCHITECTUURPRINCIPES
+======================================================================
+
+4.1 LOKAAL BLIJFT LOKAAL WAAR HET MOET
+
+Realtime vermogen en apparaatbeveiliging hoeven niet naar het platform.
+Voorbeelden die lokaal horen te blijven:
+- actueel netvermogen;
+- batterij hardwarelimieten;
+- minimale/maximale SOC;
+- maximaal laadvermogen;
+- comforttemperatuur;
+- directe peak-guardbeslissing binnen het lopende kwartier.
+
+
+4.2 HET PLATFORM LEVERT ECONOMISCHE CONTEXT
+
+Het platform levert of berekent:
+- all-in afnameprijs;
+- injectieprijs;
+- contracttype;
+- nettarieven;
+- capaciteitstarief;
+- toekomstige kwartierprijzen;
+- scenarioresultaten;
+- economisch plan.
+
+
+4.3 IEDERE ACTIE HEEFT EEN REDEN
+
+Een stuurbeslissing bevat minimaal:
+- actie;
+- doelvermogen of doeltoestand;
+- issued_at;
+- valid_from;
+- valid_until;
+- strategie;
+- reden;
+- relevante berekeningswaarden.
+
+Voorbeeld:
+
+actie: battery_charge
+doelvermogen: 3.2 kW
+valid_until: 03:15
+reden:
+- afnameprijs nu: 0,114 EUR/kWh;
+- verwachte dure periode: 0,328 EUR/kWh;
+- SOC: 41%;
+- weinig verwacht PV-overschot;
+- batterijrendement meegenomen.
+
+
+4.4 GEEN PERMANENTE SERVERCOMMANDO'S
+
+Nooit: 'laad totdat de server iets anders zegt'.
+
+Wel:
+- laad maximaal 3,2 kW;
+- geldig tot 03:15;
+- daarna automatisch terug naar veilige lokale modus.
+
+
+4.5 HARD LIMITS VERSUS SOFT TARGETS
+
+Harde grenzen zijn lokaal en mogen nooit door optimalisatie worden overschreven.
+
+Voorbeelden:
+- battery_min_soc = 20%;
+- battery_max_soc = 95%;
+- max_charge_power = 5 kW;
+- max_discharge_power = 5 kW;
+- EV minimum reserve;
+- comfort_min = 20 C.
+
+Soft targets mogen afkomstig zijn van Energieplatform:
+- goedkoopste energie;
+- gewenste SOC om 07:00;
+- peak target 4 kW;
+- PV-reserve;
+- gewenste thermische voorverwarming.
+
+
+======================================================================
+5. FUNCTIONELE BOUWBLOKKEN
+======================================================================
+
+5.1 PRICE INTELLIGENCE
+
+Nieuwe logische entities:
+
+sensor.sef_price_rank_today
+binary_sensor.sef_cheap_now
+binary_sensor.sef_expensive_now
+sensor.sef_cheapest_1h
+sensor.sef_cheapest_2h
+sensor.sef_cheapest_4h
+sensor.sef_cheapest_window_start
+sensor.sef_cheapest_window_end
+
+Aanbevolen price rank:
+- 0 = goedkoopste kwartier in gekozen horizon;
+- 100 = duurste kwartier.
+
+Alternatieve classificatie:
+- very_cheap;
+- cheap;
+- normal;
+- expensive;
+- very_expensive.
+
+Waarom relatieve prijs gebruiken:
+Een vaste regel zoals 'onder 0,15 EUR/kWh' faalt wanneer alle uren van een dag
+boven die prijs liggen of wanneer 0,15 EUR/kWh op een uitzonderlijk goedkope
+dag juist relatief duur is.
+
+Eerste implementatie:
+- sorteer beschikbare kwartieren binnen vandaag of gekozen horizon;
+- bereken percentiel/rank;
+- publiceer zowel absolute prijs als relatieve positie.
+
+
+5.2 ENERGY SCORE
+
+Doel:
+Eén eenvoudig signaal voor automatiseringen.
+
+sensor.sef_energy_score
+
+Voorstel:
+- 0 = zeer gunstig om flexibele energie te gebruiken;
+- 100 = indien mogelijk uitstellen.
+
+Versie 1 gebruikt vooral all-in afnameprijs en relatieve prijspositie.
+Latere versies kunnen meenemen:
+- injectieprijs;
+- verwachte PV;
+- peak risk;
+- batterijtoestand;
+- contracttype.
+
+Belangrijk:
+Bewaar score_version als attribuut zodat betekenis niet stilzwijgend verandert.
+
+
+5.3 PEAK GUARD
+
+Doel:
+Een dreigende nieuwe kwartierpiek detecteren voordat het kwartier voorbij is.
+
+Lokale entities:
+
+sensor.sef_current_quarter_average_power
+sensor.sef_projected_quarter_peak
+sensor.sef_peak_headroom
+binary_sensor.sef_peak_risk
+
+Methode:
+- gebruik lokaal gemeten actueel of kort-intervalvermogen;
+- integreer vanaf het begin van het huidige kwartier;
+- bereken gemiddeld vermogen tot nu;
+- projecteer voorzichtig naar het kwartiereinde;
+- vergelijk met ingestelde piekgrens en huidige relevante maandpiek.
+
+Voorbeeld:
+- huidige maandpiek: 4,8 kW;
+- voorspeld huidig kwartier: 5,3 kW;
+- peak_risk = on;
+- beschikbare headroom = 0 kW.
+
+Mogelijke lokale reacties:
+1. EV-laadvermogen verminderen;
+2. boiler pauzeren;
+3. batterij ontladen;
+4. niet-kritische last uitstellen.
+
+Belangrijk:
+Peak Guard moet lokaal kunnen functioneren zonder beschikbaarheid van de
+Energieplatform-server.
+
+
+5.4 BATTERIJSTRATEGIEEN
+
+Strategie A - SELF CONSUMPTION
+- PV-overschot laden;
+- batterij ontladen wanneer lokale vraag groter is dan productie;
+- harde SOC- en vermogensgrenzen respecteren.
+
+Strategie B - PEAK SHAVING
+- gebruiker kiest piekdoel, bijvoorbeeld 4 kW;
+- batterij ontlaadt wanneer nieuw kwartierpiekdoel dreigt;
+- optionele SOC-reserve zodat batterij beschikbaar blijft voor piekmomenten.
+
+Strategie C - PRICE OPTIMIZATION
+- laad tijdens economisch voordelige perioden;
+- ontlaad tijdens dure perioden;
+- gebruik all-in afnameprijs en injectieprijs;
+- neem round-trip efficiency mee;
+- reserveer ruimte voor verwacht PV-overschot;
+- neem optioneel degradatiekost mee.
+
+Niet meteen bouwen:
+Een complexe optimizer voordat strategie A en B betrouwbaar en meetbaar zijn.
+
+
+5.5 BATTERY BREAK-EVEN
+
+Nieuwe berekeningen/entities:
+
+sensor.sef_battery_break_even_price
+sensor.sef_battery_expected_profit_today
+binary_sensor.sef_battery_arbitrage_worthwhile
+
+Concept:
+Arbitrage is alleen zinvol als het vermeden toekomstige energiebedrag groter is
+dan laadkost + omzettingsverlies + eventuele degradatiekost.
+
+Gebruikersinstelling, optioneel:
+number.sef_battery_degradation_cost
+
+Eenheid:
+EUR per ontladen kWh of een eenduidig intern gekozen equivalent.
+
+De degradatiekost is een gebruikers-/installateursaanname, geen universeel
+platformfeit.
+
+
+5.6 EV-PLANNER
+
+Doel:
+EV-laden plannen op basis van een gewenste eindtoestand en deadline.
+
+Input:
+- EV thuis/verbonden;
+- huidige SOC indien beschikbaar;
+- gewenste SOC;
+- batterijcapaciteit voertuig;
+- maximaal laadvermogen;
+- vertrektijd;
+- eventueel minimaal onmiddellijk laadniveau.
+
+Entities:
+
+sensor.sef_ev_required_energy
+sensor.sef_ev_charge_start
+sensor.sef_ev_charge_end
+sensor.sef_ev_expected_cost
+binary_sensor.sef_ev_charge_now
+
+Randvoorwaarden:
+- deadline is hard;
+- minimale mobiliteitsreserve is hard;
+- peak guard kan laadvermogen beperken;
+- planner herberekent wanneer auto later thuiskomt of SOC wijzigt.
+
+Fallback:
+Als prijzen ontbreken, laad tijdig om de ingestelde minimum-SOC tegen vertrek te
+halen. Goedkoop laden mag nooit belangrijker worden dan de mobiliteitsdeadline.
+
+
+5.7 THERMISCHE FLEXIBILITEIT
+
+Pas bouwen na EV en batterij.
+
+Warmtepomp:
+- comfort_min;
+- comfort_target;
+- preheat_max;
+- optioneel gebouwreactie/thermische traagheid.
+
+Principe:
+- bij gunstige perioden beperkt voorverwarmen;
+- tijdens dure perioden temperatuur binnen comfortband laten terugzakken;
+- comfort blijft harde grens.
+
+Boiler:
+- minimale warmwatertemperatuur;
+- gewenste eindtemperatuur tegen deadline;
+- toegestaan laadvenster;
+- legionella-/hygiëneregime nooit verstoren.
+
+Geen eenvoudige 'prijs laag = compressor aan'-logica als eindoplossing.
+
+
+5.8 PV-FORECAST
+
+Doel:
+Voorkomen dat een batterij 's nachts volgeladen wordt wanneer enkele uren later
+veel gratis PV-productie wordt verwacht.
+
+Architectuur:
+- laat gebruiker een lokale Home Assistant PV forecast-entity kiezen;
+- hou forecast indien mogelijk lokaal;
+- planner gebruikt een samengevatte forecast of lokale coördinatie;
+- documenteer expliciet welke forecast bron wordt gebruikt.
+
+Relevante signalen:
+- verwachte PV per interval;
+- verwacht overschot;
+- benodigde vrije batterijcapaciteit.
+
+
+5.9 DAILY ENERGY PLAN
+
+Doel:
+Een begrijpelijk plan voor de komende dag produceren.
+
+Voorbeeld:
+
+01:15-04:30  EV laden
+10:30-14:00  batterijruimte reserveren voor PV
+17:15-19:45  batterij ontladen
+18:00-20:00  EV beperkt wegens Peak Guard
+
+Planresultaten:
+- expected_energy_cost;
+- baseline_expected_cost;
+- expected_saving;
+- geplande acties;
+- gebruikte prijsdata;
+- gebruikte forecast;
+- aannames;
+- plan_version.
+
+Entities:
+
+sensor.sef_plan_status
+sensor.sef_plan_expected_cost
+sensor.sef_plan_expected_saving
+sensor.sef_next_action
+
+Het plan moet leesbaar zijn voor mensen en machine-uitvoer bieden voor Home
+Assistant.
+
+
+5.10 MEASURED SAVINGS
+
+Doel:
+Na uitvoering vergelijken:
+- gepland;
+- werkelijk;
+- relevante baseline/counterfactual.
+
+Iedere planning krijgt een plan_id.
+Iedere uitgevoerde actie krijgt een verwijzing naar dat plan.
+
+Rapportage:
+
+verwachte kost: 4,83 EUR
+werkelijke kost: 5,07 EUR
+modelmatige baseline zonder planning: 7,16 EUR
+berekend voordeel: 2,09 EUR
+
+Belangrijk:
+Label duidelijk wat werkelijk gemeten is en wat een gereconstrueerde baseline is.
+Noem een counterfactual nooit een rechtstreeks gemeten besparing.
+
+Maandoverzicht:
+- werkelijk energiegebruik;
+- werkelijke energiekost;
+- uitgevoerde EMS-acties;
+- berekend vermeden bedrag;
+- batterijcycli;
+- peak guard-interventies;
+- afwijking planning versus werkelijkheid.
+
+
+======================================================================
+6. MODI VOOR VEILIGE INVOERING
+======================================================================
+
+MODUS 1 - MONITOR
+- sensoren en analyses;
+- geen stuurbeslissingen.
+
+MODUS 2 - ADVIES
+- systeem berekent acties;
+- gebruiker krijgt melding, bijvoorbeeld:
+  'Batterij laden van 01:15 tot 03:00 zou naar verwachting 0,74 EUR besparen.'
+
+MODUS 3 - DRY RUN
+- volledige planner draait;
+- acties worden geregistreerd alsof ze uitgevoerd zijn;
+- apparaten worden niet aangestuurd;
+- achteraf wordt berekend wat theoretisch gebeurd zou zijn.
+
+MODUS 4 - AUTOMATISCH
+- acties worden werkelijk uitgevoerd;
+- gebruiker moet dit expliciet inschakelen;
+- harde lokale grenzen en time-outs blijven actief.
+
+Aanbeveling:
+Een nieuwe stuurbare asset begint standaard in Monitor of Dry Run, nooit direct
+in Automatisch.
+
+
+======================================================================
+7. HOME ASSISTANT-NATIVE VERBETERINGEN
+======================================================================
+
+7.1 OPTIONS FLOW - PRIORITEIT P0
+
+De huidige noodzaak om de integratie te verwijderen en opnieuw toe te voegen bij
+een configuratiewijziging moet verdwijnen voordat meer apparaten worden
+ondersteund.
+
+Configureerbaar vanuit Home Assistant:
+- P1 entities;
+- gas entity;
+- batterij laad-/ontlaadtelwerken;
+- batterij SOC en vermogen voor sturing;
+- laadpaal/EV entities;
+- PV forecast;
+- strategie;
+- harde limieten;
+- adviserend/dry-run/automatisch;
+- piekdoel.
+
+Migratie moet bestaande config entries behouden.
+
+
+7.2 DIAGNOSTICS - PRIORITEIT P0
+
+Voeg integratiediagnostics toe met minimaal:
+- integration_version;
+- Home Assistant-versie;
+- API bereikbaar;
+- laatste succesvolle API-call;
+- laatste prijsupdate;
+- laatste P1-upload;
+- laatste batterij-upload;
+- geconfigureerde entity types;
+- statistics beschikbaar ja/nee;
+- contractdata beschikbaar ja/nee;
+- planner status;
+- actieve strategie.
+
+ALTIJD REDACTEREN:
+- API keys/tokens;
+- EAN;
+- meter-ID;
+- naam/e-mail/adres;
+- unieke identifiers die een gebruiker kunnen identificeren.
+
+Voeg snapshot/regressietest toe zodat een nieuwe release nooit per ongeluk een
+geheim in diagnostics opneemt.
+
+
+7.3 REPAIRS - PRIORITEIT P0
+
+Bestaande actionable foutcodes omzetten in Home Assistant Repair issues waar
+passend.
+
+Kandidaten:
+- P1_GEEN_TOESTEMMING;
+- BATTERIJ_GEEN_TOESTEMMING;
+- METER_ANDERS;
+- GEEN_FLUVIUS_DATA;
+- GAT_NA_LAATSTE_METING;
+- GEEN_OMREKENFACTOR;
+- ontbrekende statistieken;
+- verouderde integratieconfiguratie.
+
+Regel:
+Maak alleen een Repair als de gebruiker daadwerkelijk iets kan doen.
+Transient API/network failures horen bij beschikbaarheid/retry, niet als
+blijvende Repair.
+
+
+======================================================================
+8. VEILIGHEID EN FAILSAFE
+======================================================================
+
+8.1 COMMAND CONTRACT
+
+Iedere externe stuuraanwijzing bevat:
+- command_id;
+- plan_id;
+- asset_id;
+- action;
+- target;
+- issued_at;
+- valid_from;
+- valid_until;
+- reason;
+- strategy_version.
+
+Home Assistant weigert:
+- verlopen commando's;
+- commando's voor onbekende assets;
+- waarden buiten lokale limieten;
+- verkeerd gesigneerde/niet-geauthenticeerde opdrachten;
+- commando's wanneer automatische modus lokaal is uitgezet.
+
+
+8.2 WATCHDOG
+
+Als servercontact wegvalt:
+- huidig tijdelijk commando verloopt;
+- Home Assistant schakelt naar ingestelde fallback;
+- apparaten worden niet in een gevaarlijke of onbeperkte toestand achtergelaten.
+
+Mogelijke batterijfallbacks:
+- native/self-consumption;
+- niets actief sturen;
+- fabrikantmodus herstellen.
+
+
+8.3 IDEMPOTENTIE
+
+Herhaald ontvangen van hetzelfde command_id mag geen onverwachte extra actie
+veroorzaken.
+
+
+8.4 RATE LIMITING EN DEBOUNCE
+
+Vermijd voortdurend schakelen rond een grens.
+Gebruik onder andere:
+- minimum runtime;
+- minimum off-time;
+- hysterese;
+- maximum aantal strategy state changes per uur waar relevant.
+
+
+8.5 MANUELE OVERRIDE
+
+De gebruiker moet altijd lokaal kunnen kiezen:
+- Pauzeer EMS 1 uur;
+- Pauzeer tot morgen;
+- Handmatig;
+- Hervat automatisch.
+
+Handmatige actie door de gebruiker krijgt voorrang op een ouder EMS-commando.
+
+
+======================================================================
+9. CONCRETE ROADMAP
+======================================================================
+
+FASE 0 - STABILISEER DE INTEGRATIE
+Prioriteit: P0
+Indicatie: 2-3 weken
+
+Doel:
+De configuratie en supportbasis op orde brengen voordat sturing wordt toegevoegd.
+
+Werk:
+1. Options flow implementeren.
+2. Config-entry migratie testen.
+3. Diagnostics toevoegen en secrets redacteren.
+4. Repairs voor actionable bestaande foutcodes.
+5. API/runtime error handling inventariseren.
+6. Testdekking rond P1, batterij en prijscoordinator verbeteren.
+7. Entiteitsnamen en attributen versioneren/documenteren.
+
+Definition of Done:
+- gebruiker kan P1/batterij/gas wijzigen zonder integratie te verwijderen;
+- diagnostics bevat geen persoonsgegevens of secrets;
+- de belangrijkste herstelbare fouten verschijnen als Repair;
+- bestaande gebruikers migreren zonder verloren entities/automatiseringen.
+
+Releasevoorstel: 0.15.x / stabiliteitsrelease.
+
+
+FASE 1 - PRICE INTELLIGENCE
+Prioriteit: P1
+Indicatie: 2 weken
+
+Doel:
+Prijzen onmiddellijk bruikbaar maken voor automatiseringen.
+
+Werk:
+1. Price rank implementeren.
+2. cheap_now en expensive_now.
+3. goedkoopste aaneengesloten 1/2/4 uur berekenen.
+4. toekomstvensters als duidelijke entities/attributes.
+5. Energy Score v1.
+6. Blueprints/voorbeelden maken voor vaatwasser, boiler en eenvoudige EV-lader.
+
+Definition of Done:
+- gebruiker hoeft geen kwartieren-array in YAML te verwerken;
+- DST-dagen met 92/100 kwartieren worden correct verwerkt;
+- score is deterministisch en versioned;
+- tests voor ontbrekende morgenprijzen en maandeinde.
+
+
+FASE 2 - PEAK GUARD
+Prioriteit: P1
+Indicatie: 3 weken
+
+Doel:
+Actief voorkomen dat een flexibel toestel onnodig een nieuwe kwartierpiek maakt.
+
+Werk:
+1. lokale kwartieraccumulator;
+2. projected peak;
+3. peak headroom;
+4. configureerbaar piekdoel;
+5. binary peak_risk;
+6. notificatie/dry-run;
+7. optionele actie-interface voor EV/batterij later voorbereiden.
+
+Definition of Done:
+- blijft lokaal werken als Energieplatform offline is;
+- kwartiergrenzen inclusief DST zijn getest;
+- geen peak action op ontbrekende/onbetrouwbare vermogenssensor;
+- gebruiker ziet waarom peak_risk actief werd.
+
+
+FASE 3 - CONTROL FRAMEWORK + DRY RUN
+Prioriteit: P1
+Indicatie: 3-4 weken
+
+Doel:
+Eén veilige generieke uitvoeringslaag bouwen voordat specifieke apparaten worden
+aangestuurd.
+
+Werk:
+1. Monitor/Advies/Dry Run/Automatisch model.
+2. Plan- en command-schema.
+3. time-to-live / valid_until.
+4. lokale safety limits.
+5. manual override.
+6. watchdog/fallback.
+7. command/event logging.
+8. reason/explanation attributes.
+
+Definition of Done:
+- Dry Run kan een volledige dag beslissingen registreren zonder één actuator te
+  bedienen;
+- verlopen opdracht kan nooit blijven hangen;
+- internetverlies heeft veilige fallback;
+- iedere beslissing is auditbaar.
+
+
+FASE 4 - BATTERIJ V1: ZELFCONSUMPTIE + PEAK SHAVING
+Prioriteit: P2
+Indicatie: 4-6 weken
+
+Doel:
+Eerste echte actuator gecontroleerd ondersteunen.
+
+Werk:
+1. generiek batterij capability-model;
+2. SOC, laad-/ontlaadvermogen en operating mode mappen;
+3. self-consumption strategie;
+4. peak-shaving strategie;
+5. min/max SOC en power limits;
+6. Dry Run verplicht beschikbaar;
+7. echte batterijtelemetrie vergelijken met opdracht.
+
+Eerste apparaatondersteuning:
+Begin smal met hardware waarvoor betrouwbare lokale Home Assistant entities of
+integraties beschikbaar zijn. Vermijd een generieke 'iedere batterij werkt'
+claim voordat schrijven/terugmelding per fabrikant getest is.
+
+Definition of Done:
+- batterij kan nooit buiten lokale limieten gestuurd worden;
+- mislukte write wordt gedetecteerd;
+- werkelijke laad/ontlaadenergie wordt achteraf gekoppeld aan plan;
+- self-consumption en peak-shaving hebben vaste regressiecases.
+
+
+FASE 5 - BATTERIJ V2: ECONOMISCHE STURING
+Prioriteit: P2
+Indicatie: 4 weken
+
+Doel:
+Batterij alleen cycleren als dat economisch zinvol is.
+
+Werk:
+1. break-evenberekening;
+2. round-trip efficiency;
+3. optionele degradatiekost;
+4. all-in buy price;
+5. injectie opportunity cost;
+6. toekomstvensters;
+7. PV-reservering voorbereiden;
+8. expected profit entity.
+
+Definition of Done:
+- optimizer rekent niet met kale spotprijs als proxy voor gebruikerskost;
+- negatieve/zeer lage prijzen correct getest;
+- geen cyclus als verwachte marge kleiner is dan de ingestelde minimumwinst;
+- reden voor laden/ontladen is zichtbaar.
+
+
+FASE 6 - EV PLANNER
+Prioriteit: P2
+Indicatie: 4-6 weken
+
+Doel:
+Laden op de goedkoopste bruikbare kwartieren zonder mobiliteitsdoel te riskeren.
+
+Werk:
+1. deadline/departure helper;
+2. gewenste SOC;
+3. benodigde energie;
+4. laadvermogen/capability;
+5. cheapest feasible slots;
+6. integratie met Peak Guard;
+7. fallback wanneer prijsdata ontbreken;
+8. Dry Run en Advies eerst.
+
+Definition of Done:
+- deadline krijgt altijd voorrang op prijsoptimalisatie;
+- planner herberekent bij SOC/arrival change;
+- Peak Guard kan flexibele laadslots verschuiven;
+- verwachte versus werkelijke laadkost wordt opgeslagen.
+
+
+FASE 7 - PV FORECAST + DAILY ENERGY PLAN
+Prioriteit: P3
+Indicatie: 5-7 weken
+
+Doel:
+Losse strategieën combineren tot één dagplan.
+
+Werk:
+1. lokale PV-forecastselectie;
+2. load forecast koppelen aan profiel/scenario-engine;
+3. batterijruimte reserveren voor PV;
+4. EV en batterij gezamenlijk plannen;
+5. conflictoplossing tussen prijs, piek en deadline;
+6. daily plan entities;
+7. planningssamenvatting naar Energieplatform-dossier.
+
+Beslisvolgorde bij conflict:
+1. veiligheid/hardwarelimieten;
+2. expliciete gebruikersdeadline/comfort;
+3. peak protection indien ingesteld;
+4. economische optimalisatie;
+5. overige voorkeuren.
+
+Definition of Done:
+- planner kan komende dag reproduceren op dezelfde inputs;
+- alle gebruikte forecasts en prijzen zijn versioned/timestamped;
+- gemiste forecast veroorzaakt een degrade mode, geen foutieve agressieve sturing;
+- plan bevat voor gebruiker leesbare redenen.
+
+
+FASE 8 - THERMISCHE LASTEN
+Prioriteit: P3
+Indicatie: 5-8 weken
+
+Doel:
+Warmtepomp en boiler binnen comfort- en veiligheidsgrenzen flexibel inzetten.
+
+Werk:
+1. comfort boundaries;
+2. preheat model;
+3. minimum runtime/hysterese;
+4. boiler deadline model;
+5. prijs-/peak-integratie;
+6. dry-run vergelijking voor/na.
+
+Definition of Done:
+- comfortgrens kan niet door economische optimizer worden overschreven;
+- warmtepomp anti-cycling respecteren;
+- boilerveiligheid blijft eigendom van apparaat/fabrikant;
+- gebruiker kan sturing tijdelijk pauzeren.
+
+
+FASE 9 - GEMETEN EFFECT EN EMS-RAPPORT
+Prioriteit: P3/P4
+Indicatie: 4-6 weken
+
+Doel:
+Aantonen wat planning en sturing werkelijk hebben gedaan.
+
+Werk:
+1. plan_id door volledige keten;
+2. event/command/result audittrail;
+3. werkelijk energiegebruik en prijs koppelen;
+4. reproduceerbare baseline/counterfactual;
+5. expected versus actual;
+6. maandrapport;
+7. batterijcycli en peak interventions;
+8. datakwaliteitslabel.
+
+Definition of Done:
+- 'werkelijk gemeten' en 'modelmatige baseline' zijn strikt gescheiden;
+- gebruiker kan herleiden waardoor een berekende besparing ontstaat;
+- rapport kan opnieuw berekend worden met dezelfde brondata en modelversie.
+
+
+======================================================================
+10. 90-DAGENPLAN
+======================================================================
+
+MAAND 1 - HOME ASSISTANT FUNDAMENT
+
+Week 1
+- architecture decision record voor control framework;
+- options flow ontwerp;
+- entity/config migratie-inventaris.
+
+Week 2
+- options flow implementeren;
+- regressietests bestaande config.
+
+Week 3
+- diagnostics;
+- volledige redactietest;
+- Repairs basis.
+
+Week 4
+- foutcodes migreren naar Repairs waar passend;
+- release stabiliteitsversie.
+
+Resultaat:
+Configuratie en support zijn klaar voor groei.
+
+
+MAAND 2 - SLIMME SIGNALEN
+
+Week 5
+- price rank;
+- cheap_now / expensive_now.
+
+Week 6
+- cheapest 1/2/4h;
+- DST en ontbrekende prijsdata testen.
+
+Week 7
+- Energy Score v1;
+- automation blueprints/voorbeelden.
+
+Week 8
+- Peak Guard accumulator en projected peak prototype.
+
+Resultaat:
+Home Assistant kan zelfstandig bruikbare prijs- en pieksignalen leveren zonder
+complexe gebruikers-YAML.
+
+
+MAAND 3 - VEILIGE CONTROL LAAG
+
+Week 9
+- Peak Guard afronden;
+- peak headroom en dry-runmelding.
+
+Week 10
+- Monitor/Advies/Dry Run/Automatisch state model;
+- command schema en TTL.
+
+Week 11
+- lokale hard limits;
+- watchdog;
+- manual override.
+
+Week 12
+- 7-daagse dry-run test;
+- logging en reason fields;
+- start batterij capability-adapter.
+
+Resultaat:
+Een veilige, apparaat-onafhankelijke control-laag waarop batterij en EV kunnen
+worden aangesloten.
+
+
+======================================================================
+11. PRIORITEITENPLAN
+======================================================================
+
+P0 - EERST
+1. Options flow.
+2. Diagnostics met redactietests.
+3. Home Assistant Repairs.
+4. Config-entry migratie en regressietests.
+5. Architectuur voor harde lokale veiligheidsgrenzen.
+
+Waarom:
+Zonder deze laag wordt iedere volgende functie moeilijker te configureren,
+ondersteunen en debuggen.
+
+
+P1 - DIRECTE PRODUCTWAARDE
+6. Price rank.
+7. cheap_now / expensive_now.
+8. Cheapest 1/2/4 uur.
+9. Energy Score v1.
+10. Peak Guard.
+11. Monitor/Advies/Dry Run/Automatisch framework.
+12. Command TTL en fallback.
+
+Waarom:
+Dit levert onmiddellijk waarde, ook zonder dat Energieplatform apparaten
+rechtstreeks bestuurt.
+
+
+P2 - EERSTE ECHTE STURING
+13. Batterij capability-model.
+14. Self-consumption.
+15. Peak shaving.
+16. Economische batterijstrategie.
+17. Break-even/degradatie.
+18. EV-planner.
+
+Waarom:
+Batterij en EV zijn grote, flexibele elektrische vermogens met duidelijke
+financiële impact en passen rechtstreeks bij de bestaande kwartierprijzen,
+P1-data en capaciteitstariefanalyse.
+
+
+P3 - GEINTEGREERD EMS
+19. PV forecast.
+20. Load forecast/profiel-engine.
+21. Daily Energy Plan.
+22. Warmtepomp.
+23. Boiler.
+24. Gemeten effect per plan.
+
+
+P4 - LATER
+25. Multi-device optimalisatie op grotere schaal.
+26. Installateursprofielen/templates.
+27. Automatische optimalisatie van strategieparameters.
+28. Eventuele externe EMS API.
+29. Community device adapters uitbreiden.
+
+
+======================================================================
+12. TESTPLAN
+======================================================================
+
+PRICE TESTS
+- normale dag: 96 kwartieren;
+- zomertijd: 92 kwartieren;
+- wintertijd: 100 kwartieren;
+- morgenprijzen ontbreken;
+- negatieve prijzen;
+- identieke prijzen;
+- maandeinde waar contractprijs niet verder bekend is.
+
+PEAK GUARD TESTS
+- constante load;
+- laststap midden in kwartier;
+- EV start na 10 minuten;
+- batterij compenseert last;
+- sensor unavailable;
+- Home Assistant restart tijdens kwartier;
+- server offline;
+- kwartiergrens en DST.
+
+BATTERY TESTS
+- SOC minimum bereikt;
+- SOC maximum bereikt;
+- power limit;
+- geen verbinding met batterij;
+- write mislukt;
+- batterij volgt commando niet;
+- negatieve prijs;
+- kleine arbitragemarge onder degradatiekost;
+- groot PV-overschot verwacht;
+- peak shaving versus prijsoptimalisatieconflict.
+
+EV TESTS
+- voldoende tijd;
+- te weinig tijd;
+- auto later aangesloten;
+- SOC verandert extern;
+- geen prijsdata;
+- peak risk tijdens gepland laadslot;
+- gebruiker overschrijft planning.
+
+CONTROL SAFETY TESTS
+- server valt uit tijdens laden;
+- oud commando opnieuw ontvangen;
+- verlopen commando;
+- invalid target;
+- automatische modus lokaal uitgezet;
+- Home Assistant restart;
+- systeemklokwijziging;
+- onverwachte entity unavailable.
+
+PRIVACY TESTS
+- diagnostics bevat geen API key;
+- geen EAN;
+- geen meter-ID;
+- geen naam/e-mail/adres;
+- logs bevatten geen auth token.
+
+
+======================================================================
+13. OBSERVABILITY
+======================================================================
+
+Minimale interne metrics/logs:
+- API request success rate;
+- laatste succesvolle prijsupdate;
+- P1 upload delay;
+- planner execution duration;
+- aantal geplande acties;
+- aantal uitgevoerde acties;
+- aantal door safety layer geweigerde acties;
+- aantal manual overrides;
+- aantal expired commands;
+- forecast availability;
+- reason voor planner fallback.
+
+Home Assistant entities mogen niet worden overspoeld met technische metrics;
+veel hiervan horen in diagnostics/logging.
+
+
+======================================================================
+14. UX-PRINCIPES
+======================================================================
+
+1. De gebruiker kiest een DOEL, geen algoritme waar dat kan.
+
+Slecht:
+'Optimalisatiecoefficient 0,72'
+
+Goed:
+'Laad mijn auto zo goedkoop mogelijk en zorg dat hij om 07:30 minstens 80% is.'
+
+2. Toon altijd waarom.
+
+3. Laat automatische sturing expliciet inschakelen.
+
+4. Een gebruiker kan altijd pauzeren of handmatig overnemen.
+
+5. Scheid status, advies en echte actie visueel.
+
+6. Toon verwachting niet als garantie.
+
+7. Gebruik EUR/kWh en EUR als primaire financiële eenheden voor consumenten;
+   technische eenheden blijven beschikbaar in details.
+
+
+======================================================================
+15. WAT NIET NU BOUWEN
+======================================================================
+
+Nog niet:
+- AI-agent die zelfstandig apparaten bedient;
+- black-box batterijoptimizer;
+- tientallen hardwaremerken tegelijk;
+- warmtepompsturing vóór batterij/EV-control betrouwbaar is;
+- realtime cloudafhankelijk peak shaving;
+- automatische investeringsbeslissingen;
+- voorspelde besparing als 'gemeten besparing' labelen.
+
+Reden:
+Eerst moet de beslis- en veiligheidsketen bewezen zijn.
+
+
+======================================================================
+16. DEFINITIE VAN DE EERSTE EMS-MVP
+======================================================================
+
+De EMS-MVP is klaar wanneer:
+
+1. configuratie via Options Flow kan worden gewijzigd;
+2. Diagnostics en Repairs beschikbaar zijn;
+3. Home Assistant relatieve prijs en goedkope tijdvensters levert;
+4. Peak Guard lokaal een dreigende kwartierpiek detecteert;
+5. gebruiker Monitor, Advies en Dry Run kan kiezen;
+6. commando's technisch een TTL/failsafe hebben;
+7. batterij in Dry Run kan worden gepland voor zelfconsumptie en peak shaving;
+8. ieder advies een machineleesbare en menselijke reden heeft;
+9. alle kritieke DST-, offline- en safety-tests slagen.
+
+Automatische batterijsturing is bewust de stap NA deze MVP.
+
+
+======================================================================
+17. DE EINDTOESTAND
+======================================================================
+
+De beoogde eindketen is:
+
+CONTRACT + TARIEVEN + MARKTPRIJZEN
+                |
+                v
+        ENERGIEPLATFORM
+     scenario + planning
+                |
+          tijdelijk plan
+                |
+                v
+         HOME ASSISTANT
+ actuele woning + hard limits
+                |
+   +------------+-------------+
+   |            |             |
+BATTERIJ       EV        WARMTEPOMP/BOILER
+   |            |             |
+   +------------+-------------+
+                |
+           P1/METINGEN
+                |
+                v
+        ENERGIEPLATFORM
+    resultaat + vergelijking
+
+De kernbelofte wordt daarmee:
+
+'Energieplatform Vlaanderen bepaalt niet alleen wat energie kost. Het helpt uw
+woning energie gebruiken wanneer dat technisch en financieel zinvol is, terwijl
+Home Assistant de lokale controle behoudt. Achteraf kunt u zien wat er werkelijk
+gebeurde en welke economische impact de sturing had.'
+
+
+======================================================================
+18. EERSTVOLGENDE DEVELOPMENT BACKLOG
+======================================================================
+
+SPRINT A
+[ ] ADR: lokaal versus server verantwoordelijkheden
+[ ] Options Flow
+[ ] bestaande config migratie
+[ ] unit tests migratie
+[ ] diagnostics.py
+[ ] redactietest
+[ ] Repair mapping bestaande foutcodes
+
+SPRINT B
+[ ] price rank algoritme
+[ ] cheap_now
+[ ] expensive_now
+[ ] cheapest contiguous 1h
+[ ] cheapest contiguous 2h
+[ ] cheapest contiguous 4h
+[ ] DST tests
+[ ] Energy Score schema/versioning
+
+SPRINT C
+[ ] local quarter accumulator
+[ ] projected peak
+[ ] peak headroom
+[ ] peak risk
+[ ] configureerbaar peak target
+[ ] unavailable-sensor fallback
+[ ] Peak Guard dry-run notificatie
+
+SPRINT D
+[ ] ControlMode enum: monitor/advice/dry_run/automatic
+[ ] Plan schema
+[ ] Command schema
+[ ] valid_until enforcement
+[ ] hard limit validator
+[ ] watchdog
+[ ] manual override
+[ ] action audit log
+[ ] reason payload
+
+Daarna pas:
+[ ] batterijadapter 1
+[ ] self-consumption
+[ ] peak shaving
+[ ] economische batterijplanning
+[ ] EV planner
+[ ] daily energy plan
+
+EINDE DOCUMENT
